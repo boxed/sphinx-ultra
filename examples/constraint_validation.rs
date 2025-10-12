@@ -27,7 +27,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create validation configuration with constraints
     let config = create_validation_config();
-    println!("\nCreated validation config with {} constraints", config.constraints.len());
+    println!(
+        "\nCreated validation config with {} constraints",
+        config.constraints.len()
+    );
 
     // Create a collection of all items (in a real scenario, this would come from parsed documents)
     let mut all_items = HashMap::new();
@@ -52,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok((modified_item, failures)) => {
                 // Update the original item with any style changes
                 content_item = modified_item;
-                
+
                 if failures.is_empty() {
                     println!("✅ All constraints passed!");
                 } else {
@@ -79,8 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Now let's test with a compliant item
     println!("\n{}", "=".repeat(50));
     println!("Testing with compliant requirement...");
-    
-    let mut compliant_item = create_compliant_requirement();
+
+    let compliant_item = create_compliant_requirement();
     {
         let context2 = ValidationContext {
             current_item: &compliant_item,
@@ -90,12 +93,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         match engine.process_constraints(&compliant_item, &context2) {
-            Ok((modified_compliant, failures)) => {
-                compliant_item = modified_compliant;
+            Ok((_modified_compliant, failures)) => {
                 if failures.is_empty() {
                     println!("✅ All constraints passed for compliant item!");
                 } else {
-                    println!("❌ Unexpected failures for compliant item: {}", failures.len());
+                    println!(
+                        "❌ Unexpected failures for compliant item: {}",
+                        failures.len()
+                    );
                 }
             }
             Err(e) => {
@@ -111,17 +116,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn create_sample_requirement() -> ContentItem {
     let mut metadata = HashMap::new();
     metadata.insert("status".to_string(), FieldValue::String("open".to_string()));
-    metadata.insert("priority".to_string(), FieldValue::String("high".to_string()));
-    metadata.insert("type".to_string(), FieldValue::String("requirement".to_string()));
-    metadata.insert("tags".to_string(), FieldValue::Array(vec![
-        FieldValue::String("security".to_string()),
-        FieldValue::String("performance".to_string()),
-    ]));
+    metadata.insert(
+        "priority".to_string(),
+        FieldValue::String("high".to_string()),
+    );
+    metadata.insert(
+        "type".to_string(),
+        FieldValue::String("requirement".to_string()),
+    );
+    metadata.insert(
+        "tags".to_string(),
+        FieldValue::Array(vec![
+            FieldValue::String("security".to_string()),
+            FieldValue::String("performance".to_string()),
+        ]),
+    );
 
     ContentItem {
         id: "REQ-001".to_string(),
         title: "User Authentication Security".to_string(),
-        content: "The system shall implement secure user authentication with multi-factor support.".to_string(),
+        content: "The system shall implement secure user authentication with multi-factor support."
+            .to_string(),
         metadata,
         constraints: vec!["status_complete".to_string(), "priority_valid".to_string()],
         relationships: HashMap::new(),
@@ -136,9 +151,18 @@ fn create_sample_requirement() -> ContentItem {
 
 fn create_compliant_requirement() -> ContentItem {
     let mut metadata = HashMap::new();
-    metadata.insert("status".to_string(), FieldValue::String("complete".to_string()));
-    metadata.insert("priority".to_string(), FieldValue::String("high".to_string()));
-    metadata.insert("type".to_string(), FieldValue::String("requirement".to_string()));
+    metadata.insert(
+        "status".to_string(),
+        FieldValue::String("complete".to_string()),
+    );
+    metadata.insert(
+        "priority".to_string(),
+        FieldValue::String("high".to_string()),
+    );
+    metadata.insert(
+        "type".to_string(),
+        FieldValue::String("requirement".to_string()),
+    );
 
     ContentItem {
         id: "REQ-002".to_string(),

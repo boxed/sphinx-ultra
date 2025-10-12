@@ -299,7 +299,7 @@ pub struct ValidationConfig {
 impl Default for ValidationConfig {
     fn default() -> Self {
         let mut constraint_failed_options = HashMap::new();
-        
+
         // Default actions for different severity levels
         constraint_failed_options.insert(
             "info".to_string(),
@@ -309,7 +309,7 @@ impl Default for ValidationConfig {
                 force_style: false,
             },
         );
-        
+
         constraint_failed_options.insert(
             "warning".to_string(),
             ConstraintActions {
@@ -318,7 +318,7 @@ impl Default for ValidationConfig {
                 force_style: false,
             },
         );
-        
+
         constraint_failed_options.insert(
             "error".to_string(),
             ConstraintActions {
@@ -327,7 +327,7 @@ impl Default for ValidationConfig {
                 force_style: false,
             },
         );
-        
+
         constraint_failed_options.insert(
             "critical".to_string(),
             ConstraintActions {
@@ -386,13 +386,13 @@ impl Default for ValidationSettings {
 pub trait Validator {
     /// Validate content against rules
     fn validate(&self, context: &ValidationContext) -> ValidationResult;
-    
+
     /// Get validation rules supported by this validator
     fn get_validation_rules(&self) -> Vec<ValidationRule>;
-    
+
     /// Get the severity level for this validator
     fn get_severity(&self) -> ValidationSeverity;
-    
+
     /// Whether this validator supports incremental validation
     fn supports_incremental(&self) -> bool {
         false
@@ -403,9 +403,13 @@ pub trait Validator {
 pub trait ConstraintValidator: Validator {
     /// Validate a specific constraint rule against a content item
     fn validate_constraint(&self, rule: &ValidationRule, item: &ContentItem) -> ValidationResult;
-    
+
     /// Apply actions based on validation failures
-    fn apply_actions(&self, failures: &[ValidationFailure], actions: &ConstraintActions) -> ActionResult;
+    fn apply_actions(
+        &self,
+        failures: &[ValidationFailure],
+        actions: &ConstraintActions,
+    ) -> ActionResult;
 }
 
 /// A validation failure with detailed information

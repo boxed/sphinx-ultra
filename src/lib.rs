@@ -36,6 +36,6 @@ pub use search::SearchIndex;
 pub use template::TemplateEngine;
 pub use utils::{analyze_project, ProjectStats};
 pub use validation::{
-    ConstraintEngine, ConstraintValidator, ContentItem, FieldValue, ValidationConfig, ValidationContext,
-    ValidationResult, ValidationRule, ValidationSeverity, Validator,
+    ConstraintEngine, ConstraintValidator, ContentItem, FieldValue, ValidationConfig,
+    ValidationContext, ValidationResult, ValidationRule, ValidationSeverity, Validator,
 };
