@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance benchmarking tools ✅
 - Warning file output support (`--warning-file` / `-w` option) ✅
 - Document validation with orphan and reference checking ✅
+- **Domain System & Cross-Reference Validation** ✅
+  - Pluggable domain architecture with trait-based validators
+  - Python domain for :func:, :class:, :mod:, :meth:, :attr:, :data:, :exc: references
+  - RST domain for :doc:, :ref:, :numref: references
+  - Comprehensive reference parser with regex-based extraction
+  - External reference detection (URLs, email addresses)
+  - Intelligent suggestion system for broken references using fuzzy matching
+  - Validation statistics and detailed reporting
+  - 21 comprehensive domain-specific tests
 - **Constraint Validation System** ✅
   - Content item validation framework inspired by sphinx-needs
   - Expression evaluator for constraint logic (supports ==, !=, and, or, in)

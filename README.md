@@ -37,7 +37,9 @@ A high-performance Rust-based Sphinx documentation builder designed for large co
 - **⚠️ Validation**: Document validation with warning/error reporting
 - **🏗️ CLI Interface**: Complete command-line interface (build, clean, stats)
 - **📦 Static Assets**: Automatic copying of static files and assets
-- **🎯 Cross-References**: Basic cross-reference detection and validation
+- **🎯 Domain System**: Complete cross-reference validation with Python and RST domains
+- **🔗 Reference Validation**: Comprehensive validation of :func:, :class:, :doc:, :ref: references
+- **💡 Smart Suggestions**: Intelligent suggestions for broken references
 
 ### 🚧 Partially Implemented
 

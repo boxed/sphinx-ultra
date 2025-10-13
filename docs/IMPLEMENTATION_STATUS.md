@@ -36,6 +36,12 @@ This document provides a comprehensive overview of what features are currently i
 ### Document Validation
 - ✅ **Orphaned Document Detection**: Finds documents not in toctrees
 - ✅ **Missing Reference Detection**: Identifies broken toctree references
+- ✅ **Domain System & Cross-Reference Validation**: Complete domain-based validation system
+- ✅ **Python Domain Validation**: Validates :func:, :class:, :mod:, :meth:, :attr:, :data:, :exc: references
+- ✅ **RST Domain Validation**: Validates :doc:, :ref:, :numref: references
+- ✅ **Reference Parser**: Comprehensive cross-reference extraction from RST content
+- ✅ **External Reference Detection**: Automatic identification of external vs internal references
+- ✅ **Broken Reference Suggestions**: Intelligent suggestions for fixing broken references
 - ✅ **Warning Collection**: Gathers and reports all warnings
 - ✅ **Error Reporting**: Sphinx-style error message formatting
 - ✅ **Warning File Output**: Save warnings/errors to file with `-w`

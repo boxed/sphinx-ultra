@@ -28,6 +28,7 @@ glob = "0.3"
 
 # String processing and templating
 regex = "1.0"
+lazy_static = "1.4"
 handlebars = "6.3"
 pulldown-cmark = "0.13"
 syntect = "5.2"
@@ -94,6 +95,10 @@ path = "src/main.rs"
 [[example]]
 name = "constraint_validation"
 path = "examples/constraint_validation.rs"
+
+[[example]]
+name = "domain_validation"
+path = "examples/domain_validation.rs"
 
 [[bench]]
 name = "builder_benchmark"
