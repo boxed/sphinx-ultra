@@ -18,6 +18,7 @@ pub mod roles;
 pub mod search;
 pub mod template;
 pub mod utils;
+pub mod validation;
 
 pub use builder::{BuildStats, SphinxBuilder};
 pub use config::BuildConfig;
@@ -34,3 +35,7 @@ pub use roles::{Role, RoleRegistry};
 pub use search::SearchIndex;
 pub use template::TemplateEngine;
 pub use utils::{analyze_project, ProjectStats};
+pub use validation::{
+    ConstraintEngine, ConstraintValidator, ContentItem, FieldValue, ValidationConfig,
+    ValidationContext, ValidationResult, ValidationRule, ValidationSeverity, Validator,
+};

@@ -91,6 +91,10 @@ tempfile = "3.0"
 name = "sphinx-ultra"
 path = "src/main.rs"
 
+[[example]]
+name = "constraint_validation"
+path = "examples/constraint_validation.rs"
+
 [[bench]]
 name = "builder_benchmark"
 harness = false

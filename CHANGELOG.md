@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Performance benchmarking tools ✅
 - Warning file output support (`--warning-file` / `-w` option) ✅
 - Document validation with orphan and reference checking ✅
+- **Constraint Validation System** ✅
+  - Content item validation framework inspired by sphinx-needs
+  - Expression evaluator for constraint logic (supports ==, !=, and, or, in)
+  - Severity-based failure actions (info, warning, error, critical)
+  - Template-based error messages with variable substitution
+  - Automatic style application based on constraint failures
+  - Comprehensive validation configuration system
 - Multi-format configuration support (conf.py, YAML, JSON) ✅
 - Project statistics and analysis tools ✅
 
