@@ -33,6 +33,7 @@ A high-performance Rust-based Sphinx documentation builder designed for large co
 - **🔄 Incremental Builds**: Smart caching system for faster rebuilds
 - **📁 File Processing**: Support for RST and Markdown files
 - **🔧 Configuration**: Multiple configuration formats (conf.py, YAML, JSON)
+- **📂 File Pattern Matching**: 100% Sphinx-compatible `include_patterns` and `exclude_patterns` support
 - **📊 Statistics**: Project analysis and build metrics
 - **⚠️ Validation**: Document validation with warning/error reporting
 - **🏗️ CLI Interface**: Complete command-line interface (build, clean, stats)
@@ -178,6 +179,14 @@ output:
   search_index: true
   minify_html: false
 
+# File pattern matching (Sphinx-compatible)
+include_patterns:
+  - "**/*.rst"
+  - "**/*.md"
+exclude_patterns:
+  - "_build/**"
+  - "drafts/**"
+
 # Extensions (limited support currently)
 extensions:
   - "sphinx.ext.autodoc"
@@ -205,6 +214,7 @@ Most standard Sphinx configuration options are supported including:
 - HTML output options (theme, static paths, CSS/JS files)  
 - Extension configuration
 - Template and static file paths
+- **File pattern matching** (`include_patterns`, `exclude_patterns`) - [Full compatibility guide](docs/SPHINX_PATTERNS_COMPATIBILITY.md)
 - Build optimization settings
 
 ## 📈 Performance Benchmarks
