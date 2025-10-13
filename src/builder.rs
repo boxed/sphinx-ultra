@@ -185,7 +185,7 @@ impl SphinxBuilder {
         // Use pattern-based file discovery like Sphinx
         let mut include_patterns = self.config.include_patterns.clone();
         let exclude_patterns = &self.config.exclude_patterns;
-        
+
         // Add default source file patterns if no specific patterns are configured
         if include_patterns == vec!["**"] {
             include_patterns = vec![
@@ -194,7 +194,7 @@ impl SphinxBuilder {
                 "**/*.txt".to_string(),
             ];
         }
-        
+
         // Add built-in exclude patterns for common build artifacts and hidden files
         let mut all_exclude_patterns = exclude_patterns.clone();
         all_exclude_patterns.extend_from_slice(&[
@@ -203,15 +203,22 @@ impl SphinxBuilder {
             ".git/**".to_string(),
             ".svn/**".to_string(),
             ".hg/**".to_string(),
-            ".*/**".to_string(),  // Skip all hidden directories
+            ".*/**".to_string(), // Skip all hidden directories
             "Thumbs.db".to_string(),
             ".DS_Store".to_string(),
         ]);
-        
-        match matching::get_matching_files(&self.source_dir, &include_patterns, &all_exclude_patterns) {
+
+        match matching::get_matching_files(
+            &self.source_dir,
+            &include_patterns,
+            &all_exclude_patterns,
+        ) {
             Ok(files) => Ok(files),
             Err(e) => {
-                log::warn!("Pattern matching failed, falling back to simple discovery: {}", e);
+                log::warn!(
+                    "Pattern matching failed, falling back to simple discovery: {}",
+                    e
+                );
                 // Fallback to old method if pattern matching fails
                 let mut files = Vec::new();
                 self.discover_files_sync(&self.source_dir, &mut files)?;

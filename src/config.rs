@@ -105,11 +105,11 @@ pub struct BuildConfig {
 
     /// Turn warnings into errors
     pub fail_on_warning: bool,
-    
+
     /// Glob-style patterns for file inclusion (Sphinx compatibility)
     /// Default: ["**"] (include all files)
     pub include_patterns: Vec<String>,
-    
+
     /// Glob-style patterns for file exclusion (Sphinx compatibility)
     /// Default: [] (exclude nothing)
     /// Exclusions have priority over inclusions
@@ -214,7 +214,7 @@ impl Default for BuildConfig {
 
             // Warning handling
             fail_on_warning: false,
-            
+
             // File pattern matching (Sphinx compatibility)
             include_patterns: vec!["**".to_string()],
             exclude_patterns: vec![],

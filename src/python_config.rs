@@ -426,7 +426,7 @@ impl Default for ConfPyConfig {
             extensions: Vec::new(),
             templates_path: vec!["_templates".to_string()],
             exclude_patterns: Vec::new(),
-            include_patterns: vec!["**".to_string()],  // Sphinx default
+            include_patterns: vec!["**".to_string()], // Sphinx default
             source_suffix: HashMap::new(),
             root_doc: Some("index".to_string()),
             language: None,
@@ -608,10 +608,10 @@ impl ConfPyConfig {
 
         // Map templates path
         config.templates_path = self.templates_path.iter().map(PathBuf::from).collect();
-        
+
         // Map file patterns (Sphinx compatibility)
         config.include_patterns = if self.include_patterns.is_empty() {
-            vec!["**".to_string()]  // Sphinx default
+            vec!["**".to_string()] // Sphinx default
         } else {
             self.include_patterns.clone()
         };
