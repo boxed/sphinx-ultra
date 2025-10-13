@@ -42,6 +42,11 @@ This document provides a comprehensive overview of what features are currently i
 - ✅ **Reference Parser**: Comprehensive cross-reference extraction from RST content
 - ✅ **External Reference Detection**: Automatic identification of external vs internal references
 - ✅ **Broken Reference Suggestions**: Intelligent suggestions for fixing broken references
+- ✅ **Directive & Role Validation**: Complete directive and role validation system
+- ✅ **Built-in Directive Validators**: 10 validators for code-block, note, warning, image, figure, toctree, include, literalinclude, admonition, math
+- ✅ **Built-in Role Validators**: 10 validators for doc, ref, download, math, abbr, command, file, kbd, menuselection, guilabel
+- ✅ **Directive/Role Parser**: Advanced regex-based extraction with display text support
+- ✅ **Validation Statistics**: Comprehensive statistics with success rates and issue categorization
 - ✅ **Warning Collection**: Gathers and reports all warnings
 - ✅ **Error Reporting**: Sphinx-style error message formatting
 - ✅ **Warning File Output**: Save warnings/errors to file with `-w`
@@ -186,4 +191,4 @@ This document provides a comprehensive overview of what features are currently i
 - Theme system needs complete implementation
 - Python integration underutilized
 
-This status document is updated as of October 2024 and reflects the current state of the project.
+This status document is updated as of December 2024 and reflects the current state of the project.
