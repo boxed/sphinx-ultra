@@ -100,6 +100,10 @@ path = "examples/constraint_validation.rs"
 name = "domain_validation"
 path = "examples/domain_validation.rs"
 
+[[example]]
+name = "directive_validation"
+path = "examples/directive_validation.rs"
+
 [[bench]]
 name = "builder_benchmark"
 harness = false

@@ -22,7 +22,14 @@ pub mod validation;
 
 pub use builder::{BuildStats, SphinxBuilder};
 pub use config::BuildConfig;
-pub use directives::{Directive, DirectiveRegistry};
+pub use directives::{
+    validation::{
+        DirectiveValidationResult, DirectiveValidationSystem, DirectiveValidator, ParsedDirective,
+        ParsedRole, RoleValidationResult, RoleValidator,
+        ValidationStatistics as DirectiveValidationStatistics,
+    },
+    Directive, DirectiveRegistry,
+};
 pub use document::Document;
 pub use domains::{CrossReference, DomainObject, DomainRegistry, DomainValidator, ReferenceType};
 pub use environment::BuildEnvironment;
