@@ -13,6 +13,7 @@ pub mod error;
 pub mod extensions;
 pub mod html_builder;
 pub mod inventory;
+pub mod matching;
 pub mod parser;
 pub mod python_config;
 pub mod search;
