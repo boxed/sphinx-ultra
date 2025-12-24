@@ -11,6 +11,7 @@ use crate::document::Document;
 use crate::inventory::InventoryFile;
 use crate::renderer::HtmlRenderer;
 use crate::template::TemplateEngine;
+use crate::theme::{Theme, ThemeRegistry};
 use crate::utils;
 
 /// The filename for the inventory of objects (matches Sphinx)
@@ -66,6 +67,10 @@ pub struct HTMLBuilder {
 
     // Domain indices
     pub domain_indices: Vec<DomainIndex>,
+
+    // Theme system
+    pub theme_registry: ThemeRegistry,
+    pub active_theme: Option<Theme>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,6 +170,9 @@ impl HTMLBuilder {
             global_context: Map::new(),
             relations: HashMap::new(),
             domain_indices: Vec::new(),
+
+            theme_registry: ThemeRegistry::new(),
+            active_theme: None,
         })
     }
 
@@ -179,7 +187,10 @@ impl HTMLBuilder {
         fs::create_dir_all(&self.downloads_dir).await?;
         fs::create_dir_all(&self.images_dir).await?;
 
-        // Initialize CSS and JS files
+        // Initialize theme system
+        self.init_themes()?;
+
+        // Initialize CSS and JS files (includes theme assets)
         self.init_css_files()?;
         self.init_js_files()?;
 
@@ -192,6 +203,61 @@ impl HTMLBuilder {
         Ok(())
     }
 
+    /// Initialize theme system - discover themes and set active theme
+    fn init_themes(&mut self) -> Result<()> {
+        info!("Initializing theme system");
+
+        // Add built-in themes directory
+        // Look for themes in the crate's themes/ directory relative to the executable
+        // or in a standard location
+        let exe_path = std::env::current_exe().ok();
+        if let Some(exe) = exe_path {
+            if let Some(exe_dir) = exe.parent() {
+                let themes_dir = exe_dir.join("themes");
+                if themes_dir.exists() {
+                    self.theme_registry.add_search_path(themes_dir);
+                }
+            }
+        }
+
+        // Add themes directory relative to source directory
+        let src_themes = self.srcdir.join("_themes");
+        if src_themes.exists() {
+            self.theme_registry.add_search_path(src_themes);
+        }
+
+        // Add user-configured theme paths
+        for theme_path in &self.config.theme.theme_paths {
+            let abs_path = if theme_path.is_absolute() {
+                theme_path.clone()
+            } else {
+                self.confdir.join(theme_path)
+            };
+            if abs_path.exists() {
+                self.theme_registry.add_search_path(abs_path);
+            }
+        }
+
+        // Discover themes in all search paths
+        self.theme_registry.discover_themes()?;
+
+        // Get the configured theme name
+        let theme_name = &self.config.theme.name;
+
+        // Try to activate the theme
+        if let Some(theme) = self.theme_registry.get_theme(theme_name) {
+            info!("Using theme: {}", theme.name);
+            self.active_theme = Some(theme.clone());
+        } else {
+            warn!(
+                "Theme '{}' not found, falling back to basic styling",
+                theme_name
+            );
+        }
+
+        Ok(())
+    }
+
     /// Initialize CSS files (mirrors Sphinx's init_css_files)
     fn init_css_files(&mut self) -> Result<()> {
         self.css_files.clear();
@@ -199,13 +265,37 @@ impl HTMLBuilder {
         // Add pygments CSS
         self.add_css_file("pygments.css", 200, None, None)?;
 
-        // Add theme stylesheets
+        // Add theme stylesheets from active theme chain
+        // Collect stylesheets first to avoid borrow issues
+        let theme_stylesheets: Vec<(String, i32)> = if let Some(ref theme) = self.active_theme {
+            if let Ok(chain) = self.theme_registry.resolve_theme_chain(&theme.name) {
+                chain
+                    .iter()
+                    .flat_map(|ancestor| {
+                        ancestor
+                            .stylesheets
+                            .iter()
+                            .map(|s| (s.path.clone(), s.priority))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        for (path, priority) in theme_stylesheets {
+            self.add_css_file(&path, priority, None, None)?;
+        }
+
+        // Add config-specified theme stylesheets (html_style)
         let styles = self.config.html_style.clone();
         for style in &styles {
             self.add_css_file(style, 200, None, None)?;
         }
 
-        // Add user CSS files
+        // Add user CSS files (highest priority - loaded last)
         let css_files = self.config.html_css_files.clone();
         for css_file in &css_files {
             self.add_css_file(css_file, 800, None, None)?;
@@ -223,7 +313,32 @@ impl HTMLBuilder {
         self.add_js_file("doctools.js", 200, false, false)?;
         self.add_js_file("sphinx_highlight.js", 200, false, false)?;
 
-        // Add user JS files
+        // Add theme scripts from active theme chain
+        // Collect scripts first to avoid borrow issues
+        let theme_scripts: Vec<(String, i32, bool, bool)> = if let Some(ref theme) = self.active_theme
+        {
+            if let Ok(chain) = self.theme_registry.resolve_theme_chain(&theme.name) {
+                chain
+                    .iter()
+                    .flat_map(|ancestor| {
+                        ancestor
+                            .scripts
+                            .iter()
+                            .map(|s| (s.path.clone(), s.priority, s.async_, s.defer))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
+        for (path, priority, async_, defer) in theme_scripts {
+            self.add_js_file(&path, priority, async_, defer)?;
+        }
+
+        // Add user JS files (highest priority - loaded last)
         let js_files = self.config.html_js_files.clone();
         for js_file in &js_files {
             self.add_js_file(js_file, 800, false, false)?;
@@ -618,7 +733,24 @@ impl HTMLBuilder {
 
     /// Copy theme static files
     async fn copy_theme_static_files(&self) -> Result<()> {
-        // TODO: Implement theme system
+        if let Some(ref theme) = self.active_theme {
+            // Get the theme chain (from root ancestor to current theme)
+            if let Ok(chain) = self.theme_registry.resolve_theme_chain(&theme.name) {
+                // Copy static files from root to leaf (child overrides parent)
+                for ancestor in chain {
+                    if let Some(ref static_dir) = ancestor.static_dir {
+                        if static_dir.exists() {
+                            debug!(
+                                "Copying theme static files from {} for theme {}",
+                                static_dir.display(),
+                                ancestor.name
+                            );
+                            utils::copy_dir_all(static_dir, &self.static_dir).await?;
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 

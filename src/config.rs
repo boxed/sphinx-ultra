@@ -150,6 +150,10 @@ pub struct ThemeConfig {
 
     /// Custom JavaScript files
     pub custom_js: Vec<PathBuf>,
+
+    /// Additional directories to search for themes
+    #[serde(default)]
+    pub theme_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,6 +246,7 @@ impl Default for ThemeConfig {
             options: serde_json::json!({}),
             custom_css: vec![],
             custom_js: vec![],
+            theme_paths: vec![],
         }
     }
 }

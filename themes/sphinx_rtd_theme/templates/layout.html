@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="{{ language|default('en') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {% if metatags %}{{ metatags }}{% endif %}
+
+  <title>{{ title|striptags|e }}{% if title %} &#8212; {% endif %}{{ docstitle|e }}</title>
+
+  {% for css in css_files %}
+    {{ css_tag(css) }}
+  {% endfor %}
+
+  {% if favicon_url %}
+  <link rel="shortcut icon" href="{{ pathto(favicon_url, resource=true) }}" />
+  {% endif %}
+
+  {% block extrahead %}{% endblock %}
+</head>
+
+<body class="wy-body-for-nav">
+  <div class="wy-grid-for-nav">
+    <!-- Navigation sidebar -->
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" {% if theme_style_nav_header_background %}style="background-color: {{ theme_style_nav_header_background }}"{% endif %}>
+          {% if logo_url %}
+          <a href="{{ pathto(master_doc) }}" class="icon icon-home">
+            {% if not theme_logo_only %}{{ project }}{% endif %}
+            <img src="{{ pathto(logo_url, resource=true) }}" class="logo" alt="Logo" />
+          </a>
+          {% else %}
+          <a href="{{ pathto(master_doc) }}" class="icon icon-home">{{ project }}</a>
+          {% endif %}
+
+          {% if theme_display_version %}
+          <div class="version">{{ version }}</div>
+          {% endif %}
+
+          <div role="search">
+            <form action="{{ pathto('search') }}" method="get">
+              <input type="text" name="q" placeholder="Search docs" />
+              <input type="hidden" name="check_keywords" value="yes" />
+              <input type="hidden" name="area" value="default" />
+            </form>
+          </div>
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Main navigation">
+          {% block menu %}
+          {{ toctree(maxdepth=theme_navigation_depth|default(4), collapse=theme_collapse_navigation|default(true), includehidden=theme_includehidden|default(true), titles_only=theme_titles_only|default(false)) }}
+          {% endblock %}
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <!-- Mobile nav toggle -->
+      <nav class="wy-nav-top" aria-label="Mobile navigation menu">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="{{ pathto(master_doc) }}">{{ project }}</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <!-- Breadcrumbs -->
+          {% if parents %}
+          <div role="navigation" aria-label="Breadcrumbs">
+            <ul class="wy-breadcrumbs">
+              <li><a href="{{ pathto(master_doc) }}" class="icon icon-home"></a></li>
+              {% for parent in parents %}
+              <li><span class="divider">/</span><a href="{{ parent.link }}">{{ parent.title }}</a></li>
+              {% endfor %}
+              <li><span class="divider">/</span>{{ title }}</li>
+              {% if show_source and has_source %}
+              <li class="wy-breadcrumbs-aside">
+                <a href="{{ pathto('_sources/' + sourcename, resource=true) }}" rel="nofollow">View source</a>
+              </li>
+              {% endif %}
+            </ul>
+          </div>
+          {% endif %}
+
+          <!-- Page content -->
+          <div role="main" class="document" itemscope itemtype="http://schema.org/Article">
+            <div itemprop="articleBody">
+              {% block body %}{{ body }}{% endblock %}
+            </div>
+          </div>
+
+          <!-- Prev/Next navigation -->
+          {% if theme_prev_next_buttons_location in ['bottom', 'both'] %}
+          {% if prev or next %}
+          <footer>
+            <div class="rst-footer-buttons" role="navigation" aria-label="Footer navigation">
+              {% if prev %}
+              <a href="{{ prev.link }}" class="btn btn-neutral float-left" title="{{ prev.title|striptags|e }}">
+                <span class="fa fa-arrow-circle-left"></span> Previous
+              </a>
+              {% endif %}
+              {% if next %}
+              <a href="{{ next.link }}" class="btn btn-neutral float-right" title="{{ next.title|striptags|e }}">
+                Next <span class="fa fa-arrow-circle-right"></span>
+              </a>
+              {% endif %}
+            </div>
+          </footer>
+          {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Footer -->
+  <footer class="wy-footer">
+    <div class="container">
+      {% if show_copyright and copyright %}
+      <span>&#169; Copyright {{ copyright|e }}.</span>
+      {% endif %}
+      {% if show_sphinx %}
+      <span>Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using sphinx-ultra.</span>
+      {% endif %}
+    </div>
+  </footer>
+
+  {% for js in script_files %}
+    {{ js_tag(js) }}
+  {% endfor %}
+</body>
+</html>

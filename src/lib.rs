@@ -20,6 +20,7 @@ pub mod renderer;
 pub mod roles;
 pub mod search;
 pub mod template;
+pub mod theme;
 pub mod utils;
 pub mod validation;
 
@@ -45,6 +46,7 @@ pub use python_config::{ConfPyConfig, PythonConfigParser};
 pub use renderer::HtmlRenderer;
 pub use search::SearchIndex;
 pub use template::TemplateEngine;
+pub use theme::{Theme, ThemeRegistry};
 pub use utils::{analyze_project, ProjectStats};
 pub use validation::{
     ConstraintEngine, ConstraintValidator, ContentItem, FieldValue, ValidationConfig,

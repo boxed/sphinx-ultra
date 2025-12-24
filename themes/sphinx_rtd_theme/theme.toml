@@ -1,0 +1,20 @@
+[theme]
+name = "sphinx_rtd_theme"
+inherit = "basic"
+version = "1.0.0"
+
+[theme.stylesheets]
+files = ["css/theme.css"]
+priority = 300
+
+[theme.options]
+logo_only = { type = "bool", default = false }
+display_version = { type = "bool", default = true }
+prev_next_buttons_location = { type = "string", default = "bottom", values = ["bottom", "top", "both", "none"] }
+style_external_links = { type = "bool", default = false }
+style_nav_header_background = { type = "string", default = "#2980B9" }
+collapse_navigation = { type = "bool", default = true }
+sticky_navigation = { type = "bool", default = true }
+navigation_depth = { type = "integer", default = 4 }
+includehidden = { type = "bool", default = true }
+titles_only = { type = "bool", default = false }

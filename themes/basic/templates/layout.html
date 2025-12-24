@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="{{ language|default('en') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {% if metatags %}{{ metatags }}{% endif %}
+
+  <title>{{ title|striptags|e }}{% if title %} &#8212; {% endif %}{{ docstitle|e }}</title>
+
+  {% for css in css_files %}
+    {{ css_tag(css) }}
+  {% endfor %}
+
+  {% if favicon_url %}
+  <link rel="shortcut icon" href="{{ pathto(favicon_url, resource=true) }}" />
+  {% endif %}
+
+  {% if use_opensearch %}
+  <link rel="search" type="application/opensearchdescription+xml"
+        title="Search within {{ docstitle|e }}"
+        href="{{ pathto('_static/opensearch.xml', resource=true) }}" />
+  {% endif %}
+
+  {% block extrahead %}{% endblock %}
+</head>
+
+<body class="{% block bodyclass %}{% endblock %}">
+  {% block header %}{% endblock %}
+
+  <div class="document">
+    {% if not theme_nosidebar %}
+    <div class="sidebar" role="navigation" aria-label="Main navigation">
+      <div class="sphinxsidebarwrapper">
+        {% block sidebartitle %}
+        {% if logo_url %}
+        <p class="logo">
+          <a href="{{ pathto(master_doc) }}">
+            <img class="logo" src="{{ pathto(logo_url, resource=true) }}" alt="Logo" />
+          </a>
+        </p>
+        {% else %}
+        <h3><a href="{{ pathto(master_doc) }}">{{ project }}</a></h3>
+        {% endif %}
+        {% endblock %}
+
+        {% block sidebarsearch %}
+        <div class="searchbox">
+          <form action="{{ pathto('search') }}" method="get">
+            <input type="text" name="q" placeholder="Search docs" />
+            <input type="hidden" name="check_keywords" value="yes" />
+            <input type="hidden" name="area" value="default" />
+          </form>
+        </div>
+        {% endblock %}
+
+        {% block sidebartoc %}
+        {% if display_toc %}
+        <h3>Contents</h3>
+        {{ toc }}
+        {% endif %}
+        {% endblock %}
+
+        {% block sidebarrel %}
+        {% if prev or next %}
+        <h3>Navigation</h3>
+        <ul>
+          {% if prev %}
+          <li><a href="{{ prev.link|e }}">&laquo; {{ prev.title|striptags|e }}</a></li>
+          {% endif %}
+          {% if next %}
+          <li><a href="{{ next.link|e }}">{{ next.title|striptags|e }} &raquo;</a></li>
+          {% endif %}
+        </ul>
+        {% endif %}
+        {% endblock %}
+
+        {% block sidebarsourcelink %}
+        {% if show_source and has_source and sourcename %}
+        <h3>This Page</h3>
+        <ul>
+          <li><a href="{{ pathto('_sources/' + sourcename, resource=true) }}">Show Source</a></li>
+        </ul>
+        {% endif %}
+        {% endblock %}
+
+        {% block sidebarextra %}{% endblock %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="documentwrapper">
+      <div class="bodywrapper">
+        <div class="body" role="main">
+          {% block body %}{{ body }}{% endblock %}
+        </div>
+      </div>
+    </div>
+
+    <div class="clearer"></div>
+  </div>
+
+  {% block footer %}
+  <div class="footer" role="contentinfo">
+    {% if show_copyright and copyright %}
+      &#169; Copyright {{ copyright|e }}.
+    {% endif %}
+    {% if show_sphinx %}
+      Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using sphinx-ultra.
+    {% endif %}
+  </div>
+  {% endblock %}
+
+  {% for js in script_files %}
+    {{ js_tag(js) }}
+  {% endfor %}
+
+  {% block extrajs %}{% endblock %}
+</body>
+</html>

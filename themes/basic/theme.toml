@@ -1,0 +1,14 @@
+[theme]
+name = "basic"
+version = "1.0.0"
+
+[theme.stylesheets]
+files = ["basic.css"]
+priority = 200
+
+[theme.options]
+nosidebar = { type = "bool", default = false }
+sidebarwidth = { type = "integer", default = 230 }
+body_max_width = { type = "string", default = "none" }
+body_min_width = { type = "integer", default = 450 }
+navigation_with_keys = { type = "bool", default = false }
