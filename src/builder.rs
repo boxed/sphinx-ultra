@@ -13,6 +13,7 @@ use crate::error::{BuildErrorReport, BuildWarning};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
+use crate::renderer::HtmlRenderer;
 use crate::utils;
 
 #[derive(Debug, Clone)]
@@ -38,6 +39,8 @@ pub struct SphinxBuilder {
     incremental: bool,
     warnings: Arc<Mutex<Vec<BuildWarning>>>,
     errors: Arc<Mutex<Vec<BuildErrorReport>>>,
+    /// Map of document paths (without extension) to their titles
+    document_titles: Arc<Mutex<HashMap<String, String>>>,
     #[allow(dead_code)]
     sphinx_app: Option<SphinxApp>,
     #[allow(dead_code)]
@@ -85,6 +88,7 @@ impl SphinxBuilder {
             incremental: false,
             warnings: Arc::new(Mutex::new(Vec::new())),
             errors: Arc::new(Mutex::new(Vec::new())),
+            document_titles: Arc::new(Mutex::new(HashMap::new())),
             sphinx_app: Some(sphinx_app),
             extension_loader,
         })
@@ -123,6 +127,47 @@ impl SphinxBuilder {
         Ok(())
     }
 
+    /// Collect document titles from all source files (first pass).
+    /// This is used to populate toctree entries with proper document titles.
+    fn collect_document_titles(&self, files: &[PathBuf]) -> Result<()> {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.parallel_jobs)
+            .build()?;
+
+        let titles: Vec<_> = pool.install(|| {
+            files
+                .par_iter()
+                .filter_map(|file_path| {
+                    // Read and parse the file to extract its title
+                    let content = std::fs::read_to_string(file_path).ok()?;
+                    let doc = self.parser.parse(file_path, &content).ok()?;
+
+                    // Get the document path relative to source dir, without extension
+                    let relative_path = file_path.strip_prefix(&self.source_dir).ok()?;
+                    let doc_path = relative_path
+                        .with_extension("")
+                        .to_string_lossy()
+                        .replace('\\', "/"); // Normalize path separators
+
+                    // Only include if the document has a non-empty title
+                    if !doc.title.is_empty() && doc.title != "Untitled" {
+                        Some((doc_path, doc.title))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        });
+
+        // Store collected titles
+        let mut doc_titles = self.document_titles.lock().unwrap();
+        for (path, title) in titles {
+            doc_titles.insert(path, title);
+        }
+
+        Ok(())
+    }
+
     pub async fn build(&self) -> Result<BuildStats> {
         let start_time = Instant::now();
         info!("Starting build process...");
@@ -139,6 +184,13 @@ impl SphinxBuilder {
         debug!(
             "Built dependency graph with {} nodes",
             dependency_graph.len()
+        );
+
+        // First pass: Collect document titles for toctree rendering
+        self.collect_document_titles(&source_files)?;
+        debug!(
+            "Collected {} document titles",
+            self.document_titles.lock().unwrap().len()
         );
 
         // Process files in dependency order
@@ -303,7 +355,14 @@ impl SphinxBuilder {
     }
 
     fn process_single_file(&self, file_path: &Path) -> Result<Document> {
-        let relative_path = file_path.strip_prefix(&self.source_dir)?;
+        let relative_path = file_path.strip_prefix(&self.source_dir).map_err(|_| {
+            anyhow::anyhow!(
+                "Path '{}' is not inside source directory '{}'. \
+                 This can happen with symlinks or mixed absolute/relative paths.",
+                file_path.display(),
+                self.source_dir.display()
+            )
+        })?;
         debug!("Processing file: {}", relative_path.display());
 
         // Check cache if incremental build is enabled
@@ -321,11 +380,16 @@ impl SphinxBuilder {
         let content = std::fs::read_to_string(file_path)?;
         let document = self.parser.parse(file_path, &content)?;
 
-        // Simple document rendering (placeholder)
-        let rendered_html = format!(
-            "<html><body>{}</body></html>",
-            html_escape::encode_text(&document.content.to_string())
-        );
+        // Render document content to HTML with document titles for toctree
+        let mut renderer = HtmlRenderer::new();
+        {
+            let titles = self.document_titles.lock().unwrap();
+            for (path, title) in titles.iter() {
+                renderer.register_document_title(path, title);
+            }
+        }
+        let body_html = renderer.render_document_content(&document.content);
+        let rendered_html = format!("<html><body>{}</body></html>", body_html);
 
         // Write output file
         let output_path = self.get_output_path(file_path)?;
@@ -343,7 +407,14 @@ impl SphinxBuilder {
     }
 
     fn get_output_path(&self, source_path: &Path) -> Result<PathBuf> {
-        let relative_path = source_path.strip_prefix(&self.source_dir)?;
+        let relative_path = source_path.strip_prefix(&self.source_dir).map_err(|_| {
+            anyhow::anyhow!(
+                "Path '{}' is not inside source directory '{}'. \
+                 This can happen with symlinks or mixed absolute/relative paths.",
+                source_path.display(),
+                self.source_dir.display()
+            )
+        })?;
         let mut output_path = self.output_dir.join(relative_path);
 
         // Change extension to .html

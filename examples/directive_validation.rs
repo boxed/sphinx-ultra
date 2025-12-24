@@ -38,7 +38,7 @@ Getting Started Guide
 
 Welcome to our documentation! This guide shows various Sphinx directives and roles.
 
-.. note:: 
+.. note::
    This is an important note about the setup process.
    Make sure to read this carefully.
 
@@ -61,7 +61,7 @@ First, download the :download:`installer.exe` file from our website.
 Advanced Configuration
 ----------------------
 
-See the :doc:`configuration` guide for details. You can also refer to 
+See the :doc:`configuration` guide for details. You can also refer to
 :ref:`advanced-settings` for more options.
 
 For keyboard shortcuts, use :kbd:`Ctrl+C` to copy and :kbd:`Ctrl+V` to paste.
@@ -96,7 +96,7 @@ Problematic Examples
 .. note::
 
 .. code-block::
-   
+
    print("No language specified")
 
 .. image::

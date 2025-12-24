@@ -77,8 +77,8 @@ impl DirectiveRegistry {
         if let Some(processor) = self.get(&directive.name) {
             processor.process(directive)
         } else {
-            // Return a warning comment for unknown directives
-            Ok(format!("<!-- Unknown directive: {} -->", directive.name))
+            // Unknown directives produce no visible output
+            Ok(String::new())
         }
     }
 
@@ -452,7 +452,99 @@ macro_rules! stub_directive {
     };
 }
 
-stub_directive!(ToctreeDirective, "toctree");
+// Toctree Directive - creates table of contents tree
+struct ToctreeDirective;
+
+impl DirectiveProcessor for ToctreeDirective {
+    fn process(&self, directive: &Directive) -> Result<String> {
+        let caption = directive.options.get("caption");
+        let hidden = directive.options.contains_key("hidden");
+        let _maxdepth = directive.options.get("maxdepth");
+        let _numbered = directive.options.contains_key("numbered");
+        let _titlesonly = directive.options.contains_key("titlesonly");
+        let _glob = directive.options.contains_key("glob");
+        let _reversed = directive.options.contains_key("reversed");
+
+        // Parse document entries from content
+        let entries: Vec<&str> = directive
+            .content
+            .iter()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty() && !s.starts_with(':'))
+            .collect();
+
+        let mut html = String::new();
+
+        // Start wrapper div
+        if hidden {
+            html.push_str("<div class=\"toctree-wrapper\" style=\"display: none;\">\n");
+        } else {
+            html.push_str("<div class=\"toctree-wrapper\">\n");
+        }
+
+        // Add caption if present
+        if let Some(caption_text) = caption {
+            html.push_str(&format!(
+                "<p class=\"caption\"><span class=\"caption-text\">{}</span></p>\n",
+                html_escape::encode_text(caption_text)
+            ));
+        }
+
+        // Generate the list of links
+        if !entries.is_empty() {
+            html.push_str("<ul>\n");
+            for entry in entries {
+                // Handle entries with custom titles: "Title <path>"
+                let (title, path) = if let Some(angle_pos) = entry.find('<') {
+                    if entry.ends_with('>') {
+                        let title = entry[..angle_pos].trim();
+                        let path = &entry[angle_pos + 1..entry.len() - 1];
+                        (title.to_string(), path.to_string())
+                    } else {
+                        (entry.to_string(), entry.to_string())
+                    }
+                } else {
+                    // Use the full path as the display text
+                    // Ideally we'd look up the actual document title from the build environment
+                    (entry.to_string(), entry.to_string())
+                };
+
+                // Convert path to .html link
+                let href = format!("{}.html", path);
+
+                html.push_str(&format!(
+                    "<li><a href=\"{}\">{}</a></li>\n",
+                    html_escape::encode_text(&href),
+                    html_escape::encode_text(&title)
+                ));
+            }
+            html.push_str("</ul>\n");
+        }
+
+        html.push_str("</div>");
+
+        Ok(html)
+    }
+
+    fn get_name(&self) -> &str {
+        "toctree"
+    }
+
+    fn get_option_spec(&self) -> HashMap<String, DirectiveOptionType> {
+        let mut options = HashMap::new();
+        options.insert("maxdepth".to_string(), DirectiveOptionType::Integer);
+        options.insert("caption".to_string(), DirectiveOptionType::String);
+        options.insert("name".to_string(), DirectiveOptionType::String);
+        options.insert("hidden".to_string(), DirectiveOptionType::Flag);
+        options.insert("numbered".to_string(), DirectiveOptionType::Flag);
+        options.insert("titlesonly".to_string(), DirectiveOptionType::Flag);
+        options.insert("glob".to_string(), DirectiveOptionType::Flag);
+        options.insert("reversed".to_string(), DirectiveOptionType::Flag);
+        options.insert("includehidden".to_string(), DirectiveOptionType::Flag);
+        options
+    }
+}
+
 stub_directive!(IndexDirective, "index");
 stub_directive!(OnlyDirective, "only");
 stub_directive!(IfConfigDirective, "ifconfig");
@@ -462,8 +554,42 @@ stub_directive!(TableDirective, "table");
 stub_directive!(CsvTableDirective, "csv-table");
 stub_directive!(ListTableDirective, "list-table");
 stub_directive!(IncludeDirective, "include");
-stub_directive!(RawDirective, "raw");
 stub_directive!(MathDirective, "math");
+
+// Raw Directive - inserts raw content in a specific format (html, latex, etc.)
+struct RawDirective;
+
+impl DirectiveProcessor for RawDirective {
+    fn process(&self, directive: &Directive) -> Result<String> {
+        // The first argument is the format (html, latex, etc.)
+        let format = directive
+            .arguments
+            .first()
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        // Only output content if the format is html
+        if format == "html" {
+            // Join the content lines and return them directly without escaping
+            Ok(directive.content.join("\n"))
+        } else {
+            // For other formats (latex, text, etc.), output nothing in HTML builder
+            Ok(String::new())
+        }
+    }
+
+    fn get_name(&self) -> &str {
+        "raw"
+    }
+
+    fn get_option_spec(&self) -> HashMap<String, DirectiveOptionType> {
+        let mut options = HashMap::new();
+        options.insert("file".to_string(), DirectiveOptionType::Path);
+        options.insert("url".to_string(), DirectiveOptionType::String);
+        options.insert("encoding".to_string(), DirectiveOptionType::Encoding);
+        options
+    }
+}
 stub_directive!(AutoDocDirective, "autodoc");
 stub_directive!(AutoModuleDirective, "automodule");
 stub_directive!(AutoClassDirective, "autoclass");

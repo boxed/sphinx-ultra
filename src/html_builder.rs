@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value as JsonValue};
+use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;
@@ -9,6 +9,7 @@ use tokio::fs;
 use crate::config::BuildConfig;
 use crate::document::Document;
 use crate::inventory::InventoryFile;
+use crate::renderer::HtmlRenderer;
 use crate::template::TemplateEngine;
 use crate::utils;
 
@@ -365,10 +366,9 @@ impl HTMLBuilder {
         self.dlpath = self.get_relative_uri(docname, "_downloads");
 
         // Render the document to HTML
-        let body = format!(
-            "<div class=\"document\">\n{}\n</div>",
-            html_escape::encode_text(&doctree.content.to_string())
-        );
+        let renderer = HtmlRenderer::new();
+        let body_html = renderer.render_document_content(&doctree.content);
+        let body = format!("<div class=\"document\">\n{}\n</div>", body_html);
         let metatags = format!(
             "<meta name=\"source\" content=\"{}\" />",
             html_escape::encode_double_quoted_attribute(&doctree.source_path.to_string_lossy())

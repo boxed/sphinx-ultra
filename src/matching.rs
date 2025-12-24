@@ -220,7 +220,14 @@ pub fn get_matching_files<P: AsRef<Path>>(
                 )?;
             } else if path.is_file() {
                 // Get relative path from base directory
-                let relative_path = path.strip_prefix(base_dir)?;
+                let relative_path = path.strip_prefix(base_dir).map_err(|_| {
+                    format!(
+                        "Path '{}' is not inside base directory '{}'. \
+                         This can happen with symlinks or mixed absolute/relative paths.",
+                        path.display(),
+                        base_dir.display()
+                    )
+                })?;
                 let normalized_path = normalize_path(relative_path);
 
                 // Check if file matches any include pattern

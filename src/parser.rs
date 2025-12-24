@@ -25,7 +25,8 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(_config: &BuildConfig) -> Result<Self> {
-        let rst_directive_regex = Regex::new(r"^\s*\.\.\s+(\w+)::\s*(.*?)$")?;
+        // Match directive names with hyphens (e.g., code-block, csv-table)
+        let rst_directive_regex = Regex::new(r"^\s*\.\.\s+([\w-]+)::\s*(.*?)$")?;
         let cross_ref_regex = Regex::new(r":(\w+):`([^`]+)`")?;
         let directive_registry = DirectiveRegistry::new();
         // let role_registry = RoleRegistry::new(); // TODO: Implement roles module
@@ -145,6 +146,35 @@ impl Parser {
                     line: i + 1,
                 });
                 i += consumed_lines + 1;
+                continue;
+            }
+
+            // Check for internal hyperlink target (.. _link-name:)
+            if let Some(target_name) = self.parse_link_target(trimmed) {
+                nodes.push(RstNode::LinkTarget {
+                    name: target_name,
+                    line: i + 1,
+                });
+                i += 1;
+                continue;
+            }
+
+            // Check for RST comment (lines starting with ".. " that aren't directives or link targets)
+            // Comments can span multiple lines if subsequent lines are indented
+            if trimmed.starts_with(".. ") {
+                i += 1;
+                // Skip any following indented lines that are part of the comment
+                while i < lines.len() {
+                    let next_line = lines[i];
+                    if next_line.trim().is_empty()
+                        || next_line.starts_with("   ")
+                        || next_line.starts_with("\t")
+                    {
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
                 continue;
             }
 
@@ -322,6 +352,20 @@ impl Parser {
         }
 
         (content.trim().to_string(), consumed_lines)
+    }
+
+    /// Parse an internal hyperlink target like `.. _link-name:`
+    /// Returns the target name if this is a valid link target, None otherwise.
+    fn parse_link_target(&self, line: &str) -> Option<String> {
+        // Pattern: .. _name: (where name can contain letters, numbers, hyphens, underscores)
+        let trimmed = line.trim();
+        if trimmed.starts_with(".. _") && trimmed.ends_with(':') {
+            let name = &trimmed[4..trimmed.len() - 1]; // Remove ".. _" prefix and ":" suffix
+            if !name.is_empty() && !name.contains(' ') {
+                return Some(name.to_string());
+            }
+        }
+        None
     }
 
     fn extract_title(&self, content: &DocumentContent) -> String {

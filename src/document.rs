@@ -188,6 +188,11 @@ pub enum RstNode {
         content: String,
         line: usize,
     },
+    /// Internal hyperlink target (e.g., `.. _link-name:`)
+    LinkTarget {
+        name: String,
+        line: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
