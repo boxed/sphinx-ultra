@@ -327,11 +327,14 @@ impl Parser {
                 continue;
             }
 
-            if let Some(stripped) = line.strip_prefix("   :") {
-                // This is an option
-                if let Some(colon_pos) = stripped.find(':') {
-                    let option_name = &stripped[..colon_pos];
-                    let option_value = stripped[colon_pos + 1..].trim();
+            // Check for options - accept various indentation (3+ spaces or tab) followed by :option:
+            let trimmed = line.trim_start();
+            let indent_len = line.len() - trimmed.len();
+            if indent_len >= 3 && trimmed.starts_with(':') {
+                // This is an option line
+                if let Some(colon_pos) = trimmed[1..].find(':') {
+                    let option_name = &trimmed[1..colon_pos + 1];
+                    let option_value = trimmed[colon_pos + 2..].trim();
                     options.insert(option_name.to_string(), option_value.to_string());
                 }
                 i += 1;

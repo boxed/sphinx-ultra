@@ -2309,4 +2309,179 @@ class OtherClass:
         assert!(!html.contains("__init__"), "should NOT contain __init__, got: {}", html);
         assert!(!html.contains("other_method"), "should NOT contain other_method, got: {}", html);
     }
+
+    #[test]
+    fn test_literalinclude_pyobject_excludes_imports_and_other_objects() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            r#"#!/usr/bin/env python
+"""Module docstring."""
+
+import os
+import sys
+from pathlib import Path
+from typing import Optional, List
+
+# Module-level constant
+CONSTANT_VALUE = 42
+OTHER_CONSTANT = "hello"
+
+def before_function():
+    """A function before the target."""
+    return "before"
+
+class BeforeClass:
+    """A class before the target."""
+    pass
+
+def target_function(arg1, arg2):
+    """The target function we want to extract."""
+    result = arg1 + arg2
+    return result
+
+def after_function():
+    """A function after the target."""
+    return "after"
+
+class AfterClass:
+    """A class after the target."""
+    def method(self):
+        pass
+
+# Trailing comment
+"#,
+        )
+        .unwrap();
+
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :pyobject: target_function
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain ONLY target_function content
+        assert!(html.contains("target_function"), "should contain target_function, got: {}", html);
+        assert!(html.contains("target function we want"), "should contain docstring, got: {}", html);
+        assert!(html.contains("arg1") && html.contains("arg2"), "should contain function args, got: {}", html);
+
+        // Should NOT contain imports
+        assert!(!html.contains("import os"), "should NOT contain 'import os', got: {}", html);
+        assert!(!html.contains("import sys"), "should NOT contain 'import sys', got: {}", html);
+        assert!(!html.contains("from pathlib"), "should NOT contain 'from pathlib', got: {}", html);
+        assert!(!html.contains("from typing"), "should NOT contain 'from typing', got: {}", html);
+
+        // Should NOT contain module docstring or shebang
+        assert!(!html.contains("#!/usr/bin"), "should NOT contain shebang, got: {}", html);
+        assert!(!html.contains("Module docstring"), "should NOT contain module docstring, got: {}", html);
+
+        // Should NOT contain constants
+        assert!(!html.contains("CONSTANT_VALUE"), "should NOT contain CONSTANT_VALUE, got: {}", html);
+        assert!(!html.contains("OTHER_CONSTANT"), "should NOT contain OTHER_CONSTANT, got: {}", html);
+
+        // Should NOT contain other functions
+        assert!(!html.contains("before_function"), "should NOT contain before_function, got: {}", html);
+        assert!(!html.contains("after_function"), "should NOT contain after_function, got: {}", html);
+
+        // Should NOT contain other classes
+        assert!(!html.contains("BeforeClass"), "should NOT contain BeforeClass, got: {}", html);
+        assert!(!html.contains("AfterClass"), "should NOT contain AfterClass, got: {}", html);
+
+        // Should NOT contain trailing comment
+        assert!(!html.contains("Trailing comment"), "should NOT contain trailing comment, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_pyobject_with_end_before() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            r#"import os
+
+def my_function():
+    """My function docstring."""
+    # First part
+    x = 1
+    y = 2
+    # END MARKER
+    # Second part
+    z = 3
+    return x + y + z
+
+def other_function():
+    pass
+"#,
+        )
+        .unwrap();
+
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :pyobject: my_function
+   :end-before: # END MARKER
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        // Verify options were parsed correctly
+        if let crate::document::DocumentContent::RestructuredText(rst) = &doc.content {
+            for node in &rst.ast {
+                if let crate::document::RstNode::Directive { name, options, .. } = node {
+                    if name == "literalinclude" {
+                        assert!(options.contains_key("pyobject"), "options should contain 'pyobject': {:?}", options);
+                        assert!(options.contains_key("end-before"), "options should contain 'end-before': {:?}", options);
+                        assert_eq!(options.get("pyobject").unwrap(), "my_function");
+                        assert_eq!(options.get("end-before").unwrap(), "# END MARKER");
+                    }
+                }
+            }
+        }
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain the function definition and first part
+        assert!(html.contains("my_function"), "should contain my_function, got: {}", html);
+        assert!(html.contains("First part"), "should contain 'First part', got: {}", html);
+
+        // Should NOT contain content after END MARKER
+        assert!(!html.contains("Second part"), "should NOT contain 'Second part', got: {}", html);
+        assert!(!html.contains("z = 3"), "should NOT contain 'z = 3', got: {}", html);
+
+        // Should NOT contain the marker itself
+        assert!(!html.contains("END MARKER"), "should NOT contain 'END MARKER', got: {}", html);
+
+        // Should NOT contain imports or other functions
+        assert!(!html.contains("import os"), "should NOT contain 'import os', got: {}", html);
+        assert!(!html.contains("other_function"), "should NOT contain 'other_function', got: {}", html);
+    }
 }
