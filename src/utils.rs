@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use std::path::Path;
 
@@ -152,22 +152,58 @@ fn calculate_directory_size_sync(dir: &Path) -> Result<u64> {
 }
 
 pub async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    // Use synchronous approach
-    copy_dir_recursive_sync(src, dst)
+    copy_dir_recursive_excluding(src, dst, None).await
 }
 
-fn copy_dir_recursive_sync(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
+/// Copy directory recursively, optionally excluding a directory
+pub async fn copy_dir_recursive_excluding(
+    src: &Path,
+    dst: &Path,
+    exclude_dir: Option<&std::path::PathBuf>,
+) -> Result<()> {
+    copy_dir_recursive_sync_excluding(src, dst, exclude_dir)
+}
 
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
+fn copy_dir_recursive_sync_excluding(
+    src: &Path,
+    dst: &Path,
+    exclude_dir: Option<&std::path::PathBuf>,
+) -> Result<()> {
+    std::fs::create_dir_all(dst)
+        .with_context(|| format!("Failed to create directory: {}", dst.display()))?;
+
+    for entry in std::fs::read_dir(src)
+        .with_context(|| format!("Failed to read directory: {}", src.display()))?
+    {
+        let entry = entry
+            .with_context(|| format!("Failed to read directory entry in: {}", src.display()))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
+        // Skip excluded directory
+        if let Some(excluded) = exclude_dir {
+            if let Ok(canonical_src) = src_path.canonicalize() {
+                if &canonical_src == excluded || canonical_src.starts_with(excluded) {
+                    log::debug!("Skipping excluded directory: {}", src_path.display());
+                    continue;
+                }
+            }
+        }
+
         if src_path.is_dir() {
-            copy_dir_recursive_sync(&src_path, &dst_path)?;
+            copy_dir_recursive_sync_excluding(&src_path, &dst_path, exclude_dir)
+                .with_context(|| format!(
+                    "Failed to copy directory '{}' to '{}'",
+                    src_path.display(),
+                    dst_path.display()
+                ))?;
         } else {
-            std::fs::copy(&src_path, &dst_path)?;
+            std::fs::copy(&src_path, &dst_path)
+                .with_context(|| format!(
+                    "Failed to copy file '{}' to '{}'",
+                    src_path.display(),
+                    dst_path.display()
+                ))?;
         }
     }
 

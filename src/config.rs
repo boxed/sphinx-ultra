@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -270,13 +270,16 @@ impl Default for OptimizationConfig {
 impl BuildConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("Failed to read config file: {}", path.display()))?;
         let config = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
             || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            serde_yaml::from_str(&content)?
+            serde_yaml::from_str(&content)
+                .with_context(|| format!("Failed to parse YAML config: {}", path.display()))?
         } else {
-            serde_json::from_str(&content)?
+            serde_json::from_str(&content)
+                .with_context(|| format!("Failed to parse JSON config: {}", path.display()))?
         };
         Ok(config)
     }
@@ -323,14 +326,18 @@ impl BuildConfig {
 
     #[allow(dead_code)]
     pub fn save_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        let content = if path.as_ref().extension().and_then(|s| s.to_str()) == Some("yaml")
-            || path.as_ref().extension().and_then(|s| s.to_str()) == Some("yml")
+        let path = path.as_ref();
+        let content = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
+            || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            serde_yaml::to_string(self)?
+            serde_yaml::to_string(self)
+                .context("Failed to serialize config to YAML")?
         } else {
-            serde_json::to_string_pretty(self)?
+            serde_json::to_string_pretty(self)
+                .context("Failed to serialize config to JSON")?
         };
-        std::fs::write(path, content)?;
+        std::fs::write(path, content)
+            .with_context(|| format!("Failed to write config file: {}", path.display()))?;
         Ok(())
     }
 }

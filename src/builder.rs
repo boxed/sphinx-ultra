@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -210,10 +210,26 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
+        // Pre-canonicalize output directory for comparison
+        let canonical_output = self.output_dir.canonicalize().ok();
+
         let titles: Vec<_> = pool.install(|| {
             files
                 .par_iter()
                 .filter_map(|file_path| {
+                    // Safety check: skip files that are inside the output directory
+                    if let Some(ref output) = canonical_output {
+                        if let Ok(canonical_file) = file_path.canonicalize() {
+                            if canonical_file.starts_with(output) {
+                                log::warn!(
+                                    "Skipping file inside output directory: {}",
+                                    file_path.display()
+                                );
+                                return None;
+                            }
+                        }
+                    }
+
                     // Read and parse the file to extract its title
                     let content = std::fs::read_to_string(file_path).ok()?;
                     let doc = self.parser.parse(file_path, &content).ok()?;
@@ -249,7 +265,8 @@ impl SphinxBuilder {
         info!("Starting build process...");
 
         // Ensure output directory exists
-        tokio::fs::create_dir_all(&self.output_dir).await?;
+        tokio::fs::create_dir_all(&self.output_dir).await
+            .with_context(|| format!("Failed to create output directory: {}", self.output_dir.display()))?;
 
         // Discover all source files
         let source_files = self.discover_source_files().await?;
@@ -339,6 +356,37 @@ impl SphinxBuilder {
             ".DS_Store".to_string(),
         ]);
 
+        // Exclude the actual output directory if it's inside the source directory
+        // Canonicalize source (should always exist), but handle output specially
+        let canonical_source = self.source_dir.canonicalize().unwrap_or_else(|_| self.source_dir.clone());
+
+        // For output dir, try canonicalize, but if it doesn't exist yet, construct the path manually
+        let canonical_output = self.output_dir.canonicalize().unwrap_or_else(|_| {
+            // If output_dir is relative, join with source_dir
+            if self.output_dir.is_relative() {
+                canonical_source.join(&self.output_dir)
+            } else {
+                self.output_dir.clone()
+            }
+        });
+
+        if let Ok(rel_output) = canonical_output.strip_prefix(&canonical_source) {
+            let rel_output_str = rel_output.display().to_string();
+            if !rel_output_str.is_empty() {
+                let output_pattern = format!("{}/**", rel_output_str);
+                debug!("Adding output directory exclusion pattern: {}", output_pattern);
+                all_exclude_patterns.push(output_pattern);
+                // Also add pattern without /** to exclude the directory itself
+                all_exclude_patterns.push(rel_output_str);
+            }
+        } else {
+            debug!(
+                "Output directory {} is not inside source directory {}, no exclusion pattern added",
+                canonical_output.display(),
+                canonical_source.display()
+            );
+        }
+
         match matching::get_matching_files(
             &self.source_dir,
             &include_patterns,
@@ -360,11 +408,29 @@ impl SphinxBuilder {
 
     /// Fallback file discovery for when pattern matching fails
     fn discover_files_sync(&self, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(dir)
+            .with_context(|| format!("Failed to read directory: {}", dir.display()))?
+        {
+            let entry = entry
+                .with_context(|| format!("Failed to read directory entry in: {}", dir.display()))?;
             let path = entry.path();
 
             if path.is_dir() {
+                // Skip the output directory to avoid infinite loops
+                // Use canonicalize to handle relative vs absolute paths
+                let dominated_by_output = match (path.canonicalize(), self.output_dir.canonicalize()) {
+                    (Ok(canonical_path), Ok(canonical_output)) => {
+                        canonical_path == canonical_output || canonical_path.starts_with(&canonical_output)
+                    }
+                    _ => {
+                        // Fallback to simple comparison if canonicalize fails
+                        path == self.output_dir || path.starts_with(&self.output_dir)
+                    }
+                };
+                if dominated_by_output {
+                    continue;
+                }
+
                 // Skip hidden directories and build artifacts
                 if let Some(name) = path.file_name() {
                     if name.to_string_lossy().starts_with('.')
@@ -434,6 +500,19 @@ impl SphinxBuilder {
     }
 
     fn process_single_file(&self, file_path: &Path) -> Result<Document> {
+        // Safety check: refuse to process files inside the output directory
+        if let (Ok(canonical_file), Ok(canonical_output)) =
+            (file_path.canonicalize(), self.output_dir.canonicalize())
+        {
+            if canonical_file.starts_with(&canonical_output) {
+                return Err(anyhow::anyhow!(
+                    "Refusing to process file inside output directory: {}. \
+                     Please delete the output directory and rebuild.",
+                    file_path.display()
+                ));
+            }
+        }
+
         let relative_path = file_path.strip_prefix(&self.source_dir).map_err(|_| {
             anyhow::anyhow!(
                 "Path '{}' is not inside source directory '{}'. \
@@ -456,8 +535,10 @@ impl SphinxBuilder {
         }
 
         // Read and parse the file
-        let content = std::fs::read_to_string(file_path)?;
-        let document = self.parser.parse(file_path, &content)?;
+        let content = std::fs::read_to_string(file_path)
+            .with_context(|| format!("Failed to read source file: {}", file_path.display()))?;
+        let document = self.parser.parse(file_path, &content)
+            .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
 
         // Render document content to HTML with document titles for toctree
         let mut renderer = HtmlRenderer::new();
@@ -475,9 +556,11 @@ impl SphinxBuilder {
         // Write output file
         let output_path = self.get_output_path(file_path)?;
         if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create output directory: {}", parent.display()))?;
         }
-        std::fs::write(&output_path, &rendered_html)?;
+        std::fs::write(&output_path, &rendered_html)
+            .with_context(|| format!("Failed to write output file: {}", output_path.display()))?;
 
         // Cache the document
         if self.incremental {
@@ -589,7 +672,8 @@ impl SphinxBuilder {
 
         // Create _static directory
         let static_output_dir = self.output_dir.join("_static");
-        tokio::fs::create_dir_all(&static_output_dir).await?;
+        tokio::fs::create_dir_all(&static_output_dir).await
+            .with_context(|| format!("Failed to create static output directory: {}", static_output_dir.display()))?;
 
         // Copy theme static assets first (so project assets can override)
         if let Some(ref theme) = self.active_theme {
@@ -619,13 +703,17 @@ impl SphinxBuilder {
         for builtin_static_dir in &possible_static_dirs {
             if builtin_static_dir.exists() {
                 debug!("Found static assets at: {:?}", builtin_static_dir);
-                for entry in std::fs::read_dir(builtin_static_dir)? {
-                    let entry = entry?;
+                for entry in std::fs::read_dir(builtin_static_dir)
+                    .with_context(|| format!("Failed to read static directory: {}", builtin_static_dir.display()))?
+                {
+                    let entry = entry
+                        .with_context(|| format!("Failed to read entry in static directory: {}", builtin_static_dir.display()))?;
                     let file_path = entry.path();
                     if file_path.is_file() {
                         let file_name = file_path.file_name().unwrap();
                         let dest_path = static_output_dir.join(file_name);
-                        tokio::fs::copy(&file_path, &dest_path).await?;
+                        tokio::fs::copy(&file_path, &dest_path).await
+                            .with_context(|| format!("Failed to copy static asset {} to {}", file_path.display(), dest_path.display()))?;
                         debug!("Copied static asset: {:?}", file_name);
                     }
                 }
@@ -664,6 +752,10 @@ impl SphinxBuilder {
 
         info!("Copying extra paths to output directory");
 
+        // Pre-canonicalize source and output for safety checks
+        let canonical_source = self.source_dir.canonicalize().ok();
+        let canonical_output = self.output_dir.canonicalize().ok();
+
         for extra_path in &self.config.html_extra_path {
             // Resolve path relative to source directory
             let src_path = if extra_path.is_absolute() {
@@ -677,17 +769,45 @@ impl SphinxBuilder {
                 continue;
             }
 
+            // Safety check: don't copy the source directory itself or the output directory
+            if let Ok(canonical_src) = src_path.canonicalize() {
+                if let Some(ref source) = canonical_source {
+                    if &canonical_src == source || source.starts_with(&canonical_src) {
+                        warn!(
+                            "html_extra_path '{}' contains the source directory, skipping to prevent recursion",
+                            src_path.display()
+                        );
+                        continue;
+                    }
+                }
+                if let Some(ref output) = canonical_output {
+                    if &canonical_src == output || canonical_src.starts_with(output) {
+                        warn!(
+                            "html_extra_path '{}' is inside the output directory, skipping",
+                            src_path.display()
+                        );
+                        continue;
+                    }
+                }
+            }
+
             if src_path.is_dir() {
-                // Copy directory contents to output root
+                // Copy directory contents to output root, excluding output directory
                 info!("Copying extra directory: {}", src_path.display());
-                utils::copy_dir_recursive(&src_path, &self.output_dir).await?;
+                utils::copy_dir_recursive_excluding(&src_path, &self.output_dir, canonical_output.as_ref()).await
+                    .with_context(|| format!(
+                        "Failed to copy html_extra_path directory '{}' to '{}'",
+                        src_path.display(),
+                        self.output_dir.display()
+                    ))?;
             } else if src_path.is_file() {
                 // Copy single file to output root
                 let file_name = src_path.file_name()
                     .ok_or_else(|| anyhow::anyhow!("Invalid file path: {}", src_path.display()))?;
                 let dest_path = self.output_dir.join(file_name);
                 info!("Copying extra file: {} -> {}", src_path.display(), dest_path.display());
-                tokio::fs::copy(&src_path, &dest_path).await?;
+                tokio::fs::copy(&src_path, &dest_path).await
+                    .with_context(|| format!("Failed to copy extra file {} to {}", src_path.display(), dest_path.display()))?;
             }
         }
 
@@ -697,21 +817,31 @@ impl SphinxBuilder {
     async fn create_default_static_assets(&self, static_dir: &Path) -> Result<()> {
         // Create basic pygments.css
         let pygments_css = include_str!("../static/pygments.css");
-        tokio::fs::write(static_dir.join("pygments.css"), pygments_css).await?;
+        let path = static_dir.join("pygments.css");
+        tokio::fs::write(&path, pygments_css).await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
 
         // Create basic theme.css
         let theme_css = include_str!("../static/theme.css");
-        tokio::fs::write(static_dir.join("theme.css"), theme_css).await?;
+        let path = static_dir.join("theme.css");
+        tokio::fs::write(&path, theme_css).await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
 
         // Create basic JavaScript files
         let jquery_js = include_str!("../static/jquery.js");
-        tokio::fs::write(static_dir.join("jquery.js"), jquery_js).await?;
+        let path = static_dir.join("jquery.js");
+        tokio::fs::write(&path, jquery_js).await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
 
         let doctools_js = include_str!("../static/doctools.js");
-        tokio::fs::write(static_dir.join("doctools.js"), doctools_js).await?;
+        let path = static_dir.join("doctools.js");
+        tokio::fs::write(&path, doctools_js).await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
 
         let sphinx_highlight_js = include_str!("../static/sphinx_highlight.js");
-        tokio::fs::write(static_dir.join("sphinx_highlight.js"), sphinx_highlight_js).await?;
+        let path = static_dir.join("sphinx_highlight.js");
+        tokio::fs::write(&path, sphinx_highlight_js).await
+            .with_context(|| format!("Failed to write {}", path.display()))?;
 
         debug!("Created default static assets");
         Ok(())

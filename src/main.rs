@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use log::{info, warn};
 use std::fs::OpenOptions;
@@ -20,6 +20,10 @@ struct Cli {
     /// Configuration file path
     #[arg(short, long)]
     config: Option<PathBuf>,
+
+    /// Show backtrace on error
+    #[arg(long)]
+    backtrace: bool,
 }
 
 #[derive(Subcommand)]
@@ -71,13 +75,40 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() {
     let cli = Cli::parse();
+
+    // Enable backtrace if requested
+    if cli.backtrace {
+        std::env::set_var("RUST_BACKTRACE", "1");
+    }
 
     // Initialize logging
     let log_level = if cli.verbose { "debug" } else { "info" };
     std::env::set_var("RUST_LOG", log_level);
     env_logger::init();
+
+    if let Err(err) = run(cli).await {
+        eprintln!("Error: {:#}", err);
+
+        // Print the error chain
+        let mut source = err.source();
+        while let Some(cause) = source {
+            eprintln!("  Caused by: {}", cause);
+            source = cause.source();
+        }
+
+        // Print backtrace if available
+        let backtrace = err.backtrace();
+        if backtrace.status() == std::backtrace::BacktraceStatus::Captured {
+            eprintln!("\nBacktrace:\n{}", backtrace);
+        }
+
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
 
     info!("Sphinx Ultra Builder v{}", env!("CARGO_PKG_VERSION"));
 
@@ -92,10 +123,12 @@ async fn main() -> Result<()> {
             warning_file,
         } => {
             let mut config = if let Some(ref config_path) = cli.config {
-                BuildConfig::from_file(config_path)?
+                BuildConfig::from_file(config_path)
+                    .with_context(|| format!("Failed to load config from {}", config_path.display()))?
             } else {
                 // Try to auto-detect configuration (including conf.py)
-                BuildConfig::auto_detect(&source)?
+                BuildConfig::auto_detect(&source)
+                    .with_context(|| format!("Failed to auto-detect config in {}", source.display()))?
             };
 
             // Override config with CLI arguments
@@ -106,21 +139,22 @@ async fn main() -> Result<()> {
             // Save the fail_on_warning flag before moving config
             let should_fail_on_warning = config.fail_on_warning;
 
-            let mut builder = SphinxBuilder::new(config, source, output)?;
+            let mut builder = SphinxBuilder::new(config, source.clone(), output.clone())
+                .with_context(|| format!("Failed to create builder for source={}, output={}", source.display(), output.display()))?;
 
             if let Some(jobs) = jobs {
                 builder.set_parallel_jobs(jobs);
             }
 
             if clean {
-                builder.clean().await?;
+                builder.clean().await.context("Failed to clean output directory")?;
             }
 
             if incremental {
                 builder.enable_incremental();
             }
 
-            let stats = builder.build().await?;
+            let stats = builder.build().await.context("Build failed")?;
 
             // Handle warning file output if specified
             let mut warning_file_handle = if let Some(ref warning_file_path) = warning_file {
@@ -218,7 +252,8 @@ async fn main() -> Result<()> {
         Commands::Clean { output } => {
             info!("Cleaning output directory: {}", output.display());
             if output.exists() {
-                std::fs::remove_dir_all(&output)?;
+                std::fs::remove_dir_all(&output)
+                    .with_context(|| format!("Failed to remove output directory: {}", output.display()))?;
                 info!("Clean completed");
             } else {
                 warn!("Output directory does not exist");
@@ -226,7 +261,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Stats { source } => {
-            let stats = analyze_project(&source).await?;
+            let stats = analyze_project(&source).await
+                .with_context(|| format!("Failed to analyze project in {}", source.display()))?;
 
             println!("Project Statistics:");
             println!("  Source files: {}", stats.source_files);

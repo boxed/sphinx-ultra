@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use blake3::Hasher;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
@@ -34,7 +34,8 @@ struct CachedDocument {
 
 impl BuildCache {
     pub fn new(cache_dir: PathBuf) -> Result<Self> {
-        std::fs::create_dir_all(&cache_dir)?;
+        std::fs::create_dir_all(&cache_dir)
+            .with_context(|| format!("Failed to create cache directory: {}", cache_dir.display()))?;
 
         let cache = Self {
             cache_dir,
@@ -136,8 +137,10 @@ impl BuildCache {
         *self.miss_count.write() = 0;
 
         if self.cache_dir.exists() {
-            std::fs::remove_dir_all(&self.cache_dir)?;
-            std::fs::create_dir_all(&self.cache_dir)?;
+            std::fs::remove_dir_all(&self.cache_dir)
+                .with_context(|| format!("Failed to remove cache directory: {}", self.cache_dir.display()))?;
+            std::fs::create_dir_all(&self.cache_dir)
+                .with_context(|| format!("Failed to create cache directory: {}", self.cache_dir.display()))?;
         }
 
         debug!("Cleared all cache");
@@ -174,8 +177,10 @@ impl BuildCache {
     }
 
     fn calculate_file_hash(&self, file_path: &Path) -> Result<String> {
-        let content = std::fs::read(file_path)?;
-        let metadata = std::fs::metadata(file_path)?;
+        let content = std::fs::read(file_path)
+            .with_context(|| format!("Failed to read file for hashing: {}", file_path.display()))?;
+        let metadata = std::fs::metadata(file_path)
+            .with_context(|| format!("Failed to get file metadata: {}", file_path.display()))?;
 
         let mut hasher = Hasher::new();
         hasher.update(&content);
@@ -257,8 +262,11 @@ impl BuildCache {
             return Ok(());
         }
 
-        for entry in std::fs::read_dir(&self.cache_dir)? {
-            let entry = entry?;
+        for entry in std::fs::read_dir(&self.cache_dir)
+            .with_context(|| format!("Failed to read cache directory: {}", self.cache_dir.display()))?
+        {
+            let entry = entry
+                .with_context(|| format!("Failed to read cache entry in: {}", self.cache_dir.display()))?;
             if entry.file_type()?.is_file()
                 && entry.path().extension().is_some_and(|ext| ext == "json")
             {
@@ -277,8 +285,10 @@ impl BuildCache {
     }
 
     fn load_cache_file(&self, cache_file: &Path) -> Result<()> {
-        let content = std::fs::read_to_string(cache_file)?;
-        let cached_doc: CachedDocument = serde_json::from_str(&content)?;
+        let content = std::fs::read_to_string(cache_file)
+            .with_context(|| format!("Failed to read cache file: {}", cache_file.display()))?;
+        let cached_doc: CachedDocument = serde_json::from_str(&content)
+            .with_context(|| format!("Failed to parse cache file: {}", cache_file.display()))?;
 
         // Check if the cached document is still valid
         if !self.is_expired(&cached_doc.cached_at) {
@@ -297,12 +307,15 @@ impl BuildCache {
     fn persist_to_disk(&self, file_path: &Path, _document: &Document) -> Result<()> {
         let cache_file = self.get_cache_file_path(file_path);
         if let Some(parent) = cache_file.parent() {
-            std::fs::create_dir_all(parent)?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create cache parent directory: {}", parent.display()))?;
         }
 
         if let Some(cached_doc) = self.documents.get(file_path) {
-            let content = serde_json::to_string_pretty(&*cached_doc)?;
-            std::fs::write(&cache_file, content)?;
+            let content = serde_json::to_string_pretty(&*cached_doc)
+                .with_context(|| format!("Failed to serialize cache entry for: {}", file_path.display()))?;
+            std::fs::write(&cache_file, content)
+                .with_context(|| format!("Failed to write cache file: {}", cache_file.display()))?;
         }
 
         Ok(())

@@ -4,6 +4,7 @@
 //! include_patterns and exclude_patterns functionality. It implements the same
 //! pattern translation and matching logic as Sphinx's util/matching.py.
 
+use log;
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -210,6 +211,30 @@ pub fn get_matching_files<P: AsRef<Path>>(
             let path = entry.path();
 
             if path.is_dir() {
+                // Check if directory matches any exclude pattern before recursing
+                if let Ok(relative_path) = path.strip_prefix(base_dir) {
+                    let normalized_path = normalize_path(relative_path);
+                    // Check multiple forms to handle different pattern styles:
+                    // - "dir" matches patterns like "dir" or "dir/**"
+                    // - "dir/" matches patterns ending with /
+                    // - "dir/x" matches patterns like "dir/**" (since ** matches anything)
+                    let dir_excluded = exclude_regexes.iter().any(|regex| {
+                        regex.is_match(&normalized_path)
+                            || regex.is_match(&format!("{}/", normalized_path))
+                            || regex.is_match(&format!("{}/x", normalized_path))
+                    });
+                    if dir_excluded {
+                        log::debug!("Excluding directory from walk: {}", normalized_path);
+                        continue;
+                    }
+                } else {
+                    log::warn!(
+                        "Could not get relative path for {}, skipping directory",
+                        path.display()
+                    );
+                    continue;
+                }
+
                 // Recursively walk subdirectories
                 walk_dir(
                     &path,

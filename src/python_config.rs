@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -151,7 +151,8 @@ impl PythonConfigParser {
             .ok_or_else(|| anyhow!("Invalid conf.py path"))?;
 
         // Read the conf.py file
-        let conf_py_content = std::fs::read_to_string(conf_py_path)?;
+        let conf_py_content = std::fs::read_to_string(conf_py_path)
+            .with_context(|| format!("Failed to read conf.py: {}", conf_py_path.display()))?;
 
         // For now, implement a simple parser that extracts basic configuration
         // In a full implementation, this would execute the Python code
