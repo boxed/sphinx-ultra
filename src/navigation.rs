@@ -3,8 +3,21 @@
 //! This module provides structures for tracking document relationships
 //! (parent, children, prev, next) and building the navigation tree for sidebars.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+/// Process inline markup in navigation titles (backticks -> code tags)
+fn render_nav_title(title: &str) -> String {
+    // First HTML escape the content
+    let escaped = html_escape::encode_text(title).to_string();
+
+    // Process single backticks: `code` -> <code class="code docutils literal notranslate"><span class="pre">code</span></code>
+    let code_re = Regex::new(r"`([^`]+)`").unwrap();
+    code_re
+        .replace_all(&escaped, r#"<code class="code docutils literal notranslate"><span class="pre">$1</span></code>"#)
+        .to_string()
+}
 
 /// Represents a navigation link
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,7 +281,7 @@ impl NavigationBuilder {
             "<li class=\"toctree-l{}\"><a class=\"reference internal\" href=\"{}.html\">{}</a>",
             depth,
             html_escape::encode_text(&node.doc_path),
-            html_escape::encode_text(&node.title)
+            render_nav_title(&node.title)
         );
 
         if !node.children.is_empty() && (options.maxdepth == 0 || depth < options.maxdepth) {
