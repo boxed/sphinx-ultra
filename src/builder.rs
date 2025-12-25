@@ -879,6 +879,15 @@ impl SphinxBuilder {
 
         // Check for missing toctree references
         for (source_file, reference) in &toctree_references {
+            // Skip external URLs and special references
+            if reference.starts_with("http://")
+                || reference.starts_with("https://")
+                || reference.contains('<')  // External link syntax: "Title <url>"
+                || reference.starts_with('@')  // Some external link conventions
+            {
+                continue;
+            }
+
             let ref_path = format!("{}/index", reference);
             let alt_ref_path = reference.clone();
 
