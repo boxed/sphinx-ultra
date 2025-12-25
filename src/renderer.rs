@@ -337,17 +337,42 @@ impl HtmlRenderer {
             })
             .to_string();
 
-        // Process simple references on unescaped text: `text`_
+        // Process references on unescaped text: `text`_ or `text <URL>`_
         let ref_re = Regex::new(r"`([^`]+)`_").unwrap();
         let result_with_placeholders = ref_re
             .replace_all(&result_with_placeholders, |caps: &regex::Captures| {
                 let ref_text = &caps[1];
-                let anchor = slugify(ref_text);
-                let html = format!(
-                    "<a href=\"#{}\">{}</a>",
-                    anchor,
-                    html_escape::encode_text(ref_text)
-                );
+
+                // Check for external link format: `text <URL>`_
+                let html = if let Some(angle_pos) = ref_text.rfind('<') {
+                    if ref_text.ends_with('>') {
+                        // External link with explicit URL
+                        let display_text = ref_text[..angle_pos].trim();
+                        let url = &ref_text[angle_pos + 1..ref_text.len() - 1];
+                        format!(
+                            "<a href=\"{}\">{}</a>",
+                            html_escape::encode_text(url),
+                            html_escape::encode_text(display_text)
+                        )
+                    } else {
+                        // Malformed, treat as internal reference
+                        let anchor = slugify(ref_text);
+                        format!(
+                            "<a href=\"#{}\">{}</a>",
+                            anchor,
+                            html_escape::encode_text(ref_text)
+                        )
+                    }
+                } else {
+                    // Internal reference
+                    let anchor = slugify(ref_text);
+                    format!(
+                        "<a href=\"#{}\">{}</a>",
+                        anchor,
+                        html_escape::encode_text(ref_text)
+                    )
+                };
+
                 let placeholder = format!("\x00ROLE{}\x00", role_replacements.len());
                 role_replacements.push(html);
                 placeholder
@@ -678,6 +703,58 @@ mod tests {
             result
         );
         assert!(!result.contains("`my_function()`"), "backticks should not appear in output");
+    }
+
+    #[test]
+    fn test_rst_external_link() {
+        let renderer = HtmlRenderer::new();
+
+        // External link with URL
+        let result = renderer.render_rst_inline(
+            "See the `howto <https://docs.iommi.rocks/cookbook.html>`_ for examples."
+        );
+        assert!(
+            result.contains("<a href=\"https://docs.iommi.rocks/cookbook.html\">howto</a>"),
+            "external link should render correctly, got: {}",
+            result
+        );
+        assert!(
+            !result.contains("https://docs.iommi.rocks/cookbook.html\">https"),
+            "URL should not be visible in link text"
+        );
+    }
+
+    #[test]
+    fn test_rst_external_link_with_complex_url() {
+        let renderer = HtmlRenderer::new();
+
+        // External link with fragment
+        let result = renderer.render_rst_inline(
+            "`howto <https://docs.iommi.rocks//cookbook_parts_pages.html#parts-pages>`_"
+        );
+        assert!(
+            result.contains("href=\"https://docs.iommi.rocks//cookbook_parts_pages.html#parts-pages\""),
+            "URL with fragment should be preserved, got: {}",
+            result
+        );
+        assert!(
+            result.contains(">howto</a>"),
+            "display text should be 'howto', got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_rst_internal_reference() {
+        let renderer = HtmlRenderer::new();
+
+        // Internal reference (no URL)
+        let result = renderer.render_rst_inline("See `my-section`_ for details.");
+        assert!(
+            result.contains("<a href=\"#my-section\">my-section</a>"),
+            "internal reference should create anchor link, got: {}",
+            result
+        );
     }
 
     #[test]
