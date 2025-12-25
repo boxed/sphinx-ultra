@@ -363,6 +363,14 @@ impl HtmlRenderer {
             .replace_all(&result, "<code>$1</code>")
             .to_string();
 
+        // Process single backtick inline code: `code` -> <span class="pre">code</span>
+        // References (`text`_) were already processed and replaced with placeholders,
+        // so we can safely match remaining single backticks
+        let single_code_re = Regex::new(r"`([^`]+)`").unwrap();
+        result = single_code_re
+            .replace_all(&result, "<span class=\"pre\">$1</span>")
+            .to_string();
+
         // Process bold: **text** (must be done before italic)
         let bold_re = Regex::new(r"\*\*([^*]+)\*\*").unwrap();
         result = bold_re
@@ -653,9 +661,23 @@ mod tests {
         let result = renderer.render_rst_inline("This is *italic* text.");
         assert!(result.contains("<em>italic</em>"));
 
-        // Code
+        // Code (double backticks)
         let result = renderer.render_rst_inline("This is ``code`` text.");
         assert!(result.contains("<code>code</code>"));
+    }
+
+    #[test]
+    fn test_rst_single_backtick_inline_code() {
+        let renderer = HtmlRenderer::new();
+
+        // Single backticks should render as <span class="pre">
+        let result = renderer.render_rst_inline("Use `my_function()` to call it.");
+        assert!(
+            result.contains("<span class=\"pre\">my_function()</span>"),
+            "single backticks should render as span.pre, got: {}",
+            result
+        );
+        assert!(!result.contains("`my_function()`"), "backticks should not appear in output");
     }
 
     #[test]
