@@ -129,8 +129,11 @@ impl NavigationBuilder {
                     (None, entry.clone())
                 };
 
-                // Skip external URLs
+                // For external URLs, create a leaf node (no recursive building)
                 if child_path.starts_with("http://") || child_path.starts_with("https://") {
+                    let ext_title = child_title.unwrap_or_else(|| child_path.clone());
+                    let ext_node = TocTreeNode::new(&child_path, ext_title);
+                    node.children.push(ext_node);
                     continue;
                 }
 
@@ -233,15 +236,39 @@ impl NavigationBuilder {
         false
     }
 
-    /// Render the toctree as HTML for templates
+    /// Render the toctree as HTML for templates (starts from root's children)
     pub fn render_toctree(&self, options: &ToctreeOptions) -> String {
         let tree = self.build_tree();
-        self.render_toctree_node(&tree, 1, options)
+
+        // Build the path to current doc for "current" class markers
+        let current_path = if let Some(ref current_doc) = options.current_doc {
+            self.get_path_to_doc(current_doc, &tree)
+        } else {
+            Vec::new()
+        };
+
+        // Start from root's children, not root itself
+        if tree.children.is_empty() {
+            return String::new();
+        }
+
+        let mut checkbox_id = 1;
+        let mut html = String::new();
+        for child in &tree.children {
+            html.push_str(&self.render_toctree_node(child, 1, options, &current_path, &mut checkbox_id));
+        }
+        html
     }
 
     /// Render toctree for a specific document (its children)
     pub fn render_toctree_for(&self, doc_path: &str, options: &ToctreeOptions) -> String {
         let tree = self.build_tree();
+
+        let current_path = if let Some(ref current_doc) = options.current_doc {
+            self.get_path_to_doc(current_doc, &tree)
+        } else {
+            Vec::new()
+        };
 
         // Find the node for this document
         if let Some(node) = self.find_node(&tree, doc_path) {
@@ -249,15 +276,40 @@ impl NavigationBuilder {
                 return String::new();
             }
 
+            let mut checkbox_id = 1;
             let mut html = String::from("<ul>\n");
             for child in &node.children {
-                html.push_str(&self.render_toctree_node(child, 1, options));
+                html.push_str(&self.render_toctree_node(child, 1, options, &current_path, &mut checkbox_id));
             }
             html.push_str("</ul>\n");
             return html;
         }
 
         String::new()
+    }
+
+    /// Get the path from root to a specific document (for current markers)
+    fn get_path_to_doc(&self, doc_path: &str, tree: &TocTreeNode) -> Vec<String> {
+        let mut path = Vec::new();
+        self.find_doc_path(doc_path, tree, &mut path);
+        path
+    }
+
+    fn find_doc_path(&self, target: &str, node: &TocTreeNode, path: &mut Vec<String>) -> bool {
+        path.push(node.doc_path.clone());
+
+        if node.doc_path == target {
+            return true;
+        }
+
+        for child in &node.children {
+            if self.find_doc_path(target, child, path) {
+                return true;
+            }
+        }
+
+        path.pop();
+        false
     }
 
     fn find_node<'a>(&self, tree: &'a TocTreeNode, doc_path: &str) -> Option<&'a TocTreeNode> {
@@ -272,23 +324,72 @@ impl NavigationBuilder {
         None
     }
 
-    fn render_toctree_node(&self, node: &TocTreeNode, depth: usize, options: &ToctreeOptions) -> String {
+    fn render_toctree_node(
+        &self,
+        node: &TocTreeNode,
+        depth: usize,
+        options: &ToctreeOptions,
+        current_path: &[String],
+        checkbox_id: &mut usize,
+    ) -> String {
         if depth > options.maxdepth && options.maxdepth > 0 {
             return String::new();
         }
 
+        let is_external = node.doc_path.starts_with("http://") || node.doc_path.starts_with("https://");
+        let has_children = !node.children.is_empty() && (options.maxdepth == 0 || depth < options.maxdepth);
+        let is_current = !is_external && current_path.contains(&node.doc_path);
+        let is_current_page = !is_external && options.current_doc.as_ref().map(|d| d == &node.doc_path).unwrap_or(false);
+
+        // Build class list
+        let mut classes = vec![format!("toctree-l{}", depth)];
+        if is_current {
+            classes.push("current".to_string());
+        }
+        if is_current_page {
+            classes.push("current-page".to_string());
+        }
+        if has_children {
+            classes.push("has-children".to_string());
+        }
+
+        // Build link class and href
+        let (link_class, href) = if is_external {
+            ("reference external", node.doc_path.clone())
+        } else if is_current_page {
+            ("current reference internal", format!("{}.html", node.doc_path))
+        } else {
+            ("reference internal", format!("{}.html", node.doc_path))
+        };
+
         let mut html = format!(
-            "<li class=\"toctree-l{}\"><a class=\"reference internal\" href=\"{}.html\">{}</a>",
-            depth,
-            html_escape::encode_text(&node.doc_path),
+            "<li class=\"{}\"><a class=\"{}\" href=\"{}\">{}</a>",
+            classes.join(" "),
+            link_class,
+            html_escape::encode_text(&href),
             render_nav_title(&node.title)
         );
 
-        if !node.children.is_empty() && (options.maxdepth == 0 || depth < options.maxdepth) {
-            let collapsed = if options.collapse { " collapse" } else { "" };
-            html.push_str(&format!("\n<ul class=\"toctree{}\">\n", collapsed));
+        if has_children {
+            // Add checkbox toggle for collapsible navigation
+            let current_checkbox_id = *checkbox_id;
+            *checkbox_id += 1;
+
+            html.push_str(&format!(
+                "<input aria-label=\"Toggle navigation of {}\" class=\"toctree-checkbox\" id=\"toctree-checkbox-{}\" name=\"toctree-checkbox-{}\" role=\"switch\" type=\"checkbox\"{}>",
+                html_escape::encode_text(&node.title),
+                current_checkbox_id,
+                current_checkbox_id,
+                if is_current { " checked" } else { "" }
+            ));
+            html.push_str(&format!(
+                "<label for=\"toctree-checkbox-{}\"><span class=\"icon\"><svg><use href=\"#svg-arrow-right\"></use></svg></span></label>",
+                current_checkbox_id
+            ));
+
+            html.push_str("<ul>\n");
             for child in &node.children {
-                html.push_str(&self.render_toctree_node(child, depth + 1, options));
+                html.push_str(&self.render_toctree_node(child, depth + 1, options, current_path, checkbox_id));
             }
             html.push_str("</ul>\n");
         }
@@ -315,6 +416,8 @@ pub struct ToctreeOptions {
     pub collapse: bool,
     pub includehidden: bool,
     pub titles_only: bool,
+    /// The current document being rendered (for highlighting)
+    pub current_doc: Option<String>,
 }
 
 impl Default for ToctreeOptions {
@@ -324,6 +427,7 @@ impl Default for ToctreeOptions {
             collapse: true,
             includehidden: true,
             titles_only: false,
+            current_doc: None,
         }
     }
 }
@@ -399,9 +503,54 @@ mod tests {
         let options = ToctreeOptions::default();
         let html = builder.render_toctree(&options);
 
+        // Should contain children of root (intro and guide), but NOT the root (Welcome)
         assert!(html.contains("Introduction"));
         assert!(html.contains("User Guide"));
         assert!(html.contains("intro.html"));
         assert!(html.contains("guide.html"));
+        assert!(!html.contains("Welcome")); // Root should not be in toctree
+    }
+
+    #[test]
+    fn test_render_toctree_with_current_doc() {
+        let mut builder = NavigationBuilder::new("index");
+
+        builder.register_document("index", "Welcome");
+        builder.register_document("components", "Components");
+        builder.register_document("action", "Action");
+
+        builder.register_toctree("index", vec!["components".to_string()]);
+        builder.register_toctree("components", vec!["action".to_string()]);
+
+        let mut options = ToctreeOptions::default();
+        options.current_doc = Some("action".to_string());
+        let html = builder.render_toctree(&options);
+
+        // Should have current classes in the path to action
+        assert!(html.contains("class=\"toctree-l1 current has-children\""));
+        assert!(html.contains("class=\"toctree-l2 current current-page\""));
+        assert!(html.contains("class=\"current reference internal\" href=\"action.html\""));
+        // Should have checkbox toggle
+        assert!(html.contains("toctree-checkbox"));
+    }
+
+    #[test]
+    fn test_render_toctree_has_children() {
+        let mut builder = NavigationBuilder::new("index");
+
+        builder.register_document("index", "Welcome");
+        builder.register_document("parent", "Parent");
+        builder.register_document("child", "Child");
+        builder.register_document("leaf", "Leaf");
+
+        builder.register_toctree("index", vec!["parent".to_string(), "leaf".to_string()]);
+        builder.register_toctree("parent", vec!["child".to_string()]);
+
+        let options = ToctreeOptions::default();
+        let html = builder.render_toctree(&options);
+
+        // Parent has children, leaf does not
+        assert!(html.contains("has-children"));
+        assert!(html.contains("<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"leaf.html\">Leaf</a></li>"));
     }
 }

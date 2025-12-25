@@ -5,6 +5,7 @@ use crate::document::{DocumentContent, MarkdownContent, MarkdownNode, RstContent
 use crate::roles::{Role, RoleRegistry};
 use regex::Regex;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use syntect::highlighting::ThemeSet;
 use syntect::html::highlighted_html_for_string;
 use syntect::parsing::SyntaxSet;
@@ -21,6 +22,8 @@ pub struct HtmlRenderer {
     theme_set: ThemeSet,
     /// Name of the theme to use for highlighting
     theme_name: String,
+    /// Source directory for resolving relative paths (e.g., for literalinclude)
+    source_dir: Option<PathBuf>,
 }
 
 impl Default for HtmlRenderer {
@@ -39,7 +42,13 @@ impl HtmlRenderer {
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             theme_name: "base16-ocean.dark".to_string(),
+            source_dir: None,
         }
+    }
+
+    /// Set the source directory for resolving relative paths in directives like literalinclude.
+    pub fn set_source_dir(&mut self, source_dir: PathBuf) {
+        self.source_dir = Some(source_dir);
     }
 
     /// Set the syntax highlighting theme.
@@ -250,12 +259,31 @@ impl HtmlRenderer {
                     return self.render_toctree(options, content);
                 }
 
+                // Handle literalinclude specially since it needs to read files from source_dir
+                if name == "literalinclude" {
+                    let filename = args.first().map(|s| s.as_str()).unwrap_or("");
+                    return self.render_literalinclude(filename, options);
+                }
+
+                // Pre-process content for inline RST markup (roles like :ref:, :doc:, etc.)
+                // This is needed for admonitions and other directives that contain RST text
+                // Skip processing for directives that should receive raw content (like raw, code-block, literalinclude)
+                let raw_content_directives = ["raw", "code-block", "code", "sourcecode", "literalinclude", "highlight"];
+                let processed_content: Vec<String> = if raw_content_directives.contains(&name.as_str()) {
+                    content.lines().map(String::from).collect()
+                } else {
+                    content
+                        .lines()
+                        .map(|line| self.render_rst_inline(line))
+                        .collect()
+                };
+
                 // Convert to Directive struct for processing
                 let directive = Directive {
                     name: name.clone(),
                     arguments: args.clone(),
                     options: options.clone(),
-                    content: content.lines().map(String::from).collect(),
+                    content: processed_content,
                     line_number: *line,
                     source_file: String::new(),
                 };
@@ -365,6 +393,306 @@ impl HtmlRenderer {
 
         html.push_str("</div>");
         html
+    }
+
+    /// Render a literalinclude directive by reading a file and optionally applying filters.
+    fn render_literalinclude(&self, filename: &str, options: &HashMap<String, String>) -> String {
+        // Resolve the file path relative to source_dir
+        let file_path = if let Some(ref source_dir) = self.source_dir {
+            source_dir.join(filename)
+        } else {
+            PathBuf::from(filename)
+        };
+
+        // Read the file content
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(content) => content,
+            Err(e) => {
+                return format!(
+                    "<!-- literalinclude error: could not read '{}': {} -->",
+                    filename, e
+                );
+            }
+        };
+
+        // Handle :pyobject: option - extract a specific Python object
+        let content = if let Some(pyobject) = options.get("pyobject") {
+            match self.extract_python_object(&content, pyobject) {
+                Some(extracted) => extracted,
+                None => {
+                    return format!(
+                        "<!-- literalinclude error: could not find pyobject '{}' in '{}' -->",
+                        pyobject, filename
+                    );
+                }
+            }
+        } else {
+            content
+        };
+
+        // Apply line-based filtering
+        let mut lines: Vec<&str> = content.lines().collect();
+
+        // Handle start-after option (find line containing this text and start after it)
+        if let Some(start_after) = options.get("start-after") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(start_after.as_str())) {
+                lines = lines[pos + 1..].to_vec();
+            }
+        }
+
+        // Handle end-before option (find line containing this text and end before it)
+        if let Some(end_before) = options.get("end-before") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(end_before.as_str())) {
+                lines = lines[..pos].to_vec();
+            }
+        }
+
+        // Handle start-line option (1-based indexing)
+        if let Some(start_line) = options.get("start-line") {
+            if let Ok(start) = start_line.parse::<usize>() {
+                if start > 0 && start <= lines.len() {
+                    lines = lines[start - 1..].to_vec();
+                }
+            }
+        }
+
+        // Handle end-line option (1-based indexing, exclusive)
+        if let Some(end_line) = options.get("end-line") {
+            if let Ok(end) = end_line.parse::<usize>() {
+                if end > 0 && end <= lines.len() {
+                    lines = lines[..end].to_vec();
+                }
+            }
+        }
+
+        // Handle :lines: option (e.g., "1-10", "1,3,5-7")
+        if let Some(lines_spec) = options.get("lines") {
+            let selected_lines = self.parse_lines_spec(lines_spec, lines.len());
+            lines = selected_lines
+                .iter()
+                .filter_map(|&i| lines.get(i).copied())
+                .collect();
+        }
+
+        // Handle dedent option
+        if let Some(dedent_str) = options.get("dedent") {
+            if let Ok(dedent) = dedent_str.parse::<usize>() {
+                lines = lines
+                    .iter()
+                    .map(|line| {
+                        if line.len() >= dedent {
+                            &line[dedent.min(line.len() - line.trim_start().len())..]
+                        } else {
+                            line.trim_start()
+                        }
+                    })
+                    .collect();
+            }
+        }
+
+        let filtered_content = lines.join("\n");
+
+        // Determine language for syntax highlighting
+        let language = options
+            .get("language")
+            .cloned()
+            .or_else(|| {
+                std::path::Path::new(filename)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| {
+                        match ext {
+                            "py" => "python",
+                            "rs" => "rust",
+                            "js" => "javascript",
+                            "ts" => "typescript",
+                            "cpp" | "cc" | "cxx" => "cpp",
+                            "c" => "c",
+                            "h" | "hpp" => "cpp",
+                            "java" => "java",
+                            "go" => "go",
+                            "php" => "php",
+                            "rb" => "ruby",
+                            "sh" | "bash" => "bash",
+                            "ps1" => "powershell",
+                            "sql" => "sql",
+                            "xml" => "xml",
+                            "html" | "htm" => "html",
+                            "css" => "css",
+                            "json" => "json",
+                            "yaml" | "yml" => "yaml",
+                            "toml" => "toml",
+                            "ini" | "cfg" => "ini",
+                            "md" => "markdown",
+                            "rst" => "rst",
+                            "tex" => "latex",
+                            _ => "text",
+                        }
+                        .to_string()
+                    })
+            })
+            .unwrap_or_else(|| "text".to_string());
+
+        // Apply syntax highlighting
+        let theme = &self.theme_set.themes[&self.theme_name];
+        let syntax = self
+            .syntax_set
+            .find_syntax_by_token(&language)
+            .or_else(|| self.syntax_set.find_syntax_by_extension(&language))
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+
+        let highlighted = match highlighted_html_for_string(&filtered_content, &self.syntax_set, syntax, theme) {
+            Ok(html) => html,
+            Err(_) => {
+                let escaped = html_escape::encode_text(&filtered_content);
+                format!("<pre><code>{}</code></pre>", escaped)
+            }
+        };
+
+        // Build the final HTML
+        let mut html = String::new();
+
+        // Add caption if present
+        if let Some(caption) = options.get("caption") {
+            // Replace {filename} placeholder with actual filename
+            let caption_text = caption.replace("{filename}", filename);
+            html.push_str(&format!(
+                "<div class=\"code-block-caption\"><span class=\"caption-text\">{}</span></div>\n",
+                html_escape::encode_text(&caption_text)
+            ));
+        }
+
+        html.push_str(&format!(
+            "<div class=\"highlight-{} notranslate\">{}</div>",
+            language, highlighted
+        ));
+
+        html
+    }
+
+    /// Parse a lines specification like "1-10", "1,3,5-7", "1-10,15,20-25"
+    /// Returns 0-based indices
+    fn parse_lines_spec(&self, spec: &str, total_lines: usize) -> Vec<usize> {
+        let mut result = Vec::new();
+
+        for part in spec.split(',') {
+            let part = part.trim();
+            if part.contains('-') {
+                // Range like "1-10"
+                let parts: Vec<&str> = part.split('-').collect();
+                if parts.len() == 2 {
+                    if let (Ok(start), Ok(end)) = (parts[0].trim().parse::<usize>(), parts[1].trim().parse::<usize>()) {
+                        for i in start..=end {
+                            if i > 0 && i <= total_lines {
+                                result.push(i - 1); // Convert to 0-based
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Single line number
+                if let Ok(line) = part.parse::<usize>() {
+                    if line > 0 && line <= total_lines {
+                        result.push(line - 1); // Convert to 0-based
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Extract a Python object (function, class, or method) from source code.
+    /// Supports formats like "function_name", "ClassName", or "ClassName.method_name"
+    fn extract_python_object(&self, content: &str, pyobject: &str) -> Option<String> {
+        let lines: Vec<&str> = content.lines().collect();
+
+        // Check if we're looking for a method (Class.method format)
+        if let Some(dot_pos) = pyobject.find('.') {
+            let class_name = &pyobject[..dot_pos];
+            let method_name = &pyobject[dot_pos + 1..];
+
+            // First find the class
+            if let Some((class_start, class_end)) = self.find_python_object_range(&lines, class_name, 0) {
+                // Then find the method within the class
+                let class_lines: Vec<&str> = lines[class_start..class_end].to_vec();
+                if let Some((method_start, method_end)) = self.find_python_object_range(&class_lines, method_name, 1) {
+                    return Some(class_lines[method_start..method_end].join("\n"));
+                }
+            }
+            return None;
+        }
+
+        // Looking for a top-level function or class
+        if let Some((start, end)) = self.find_python_object_range(&lines, pyobject, 0) {
+            return Some(lines[start..end].join("\n"));
+        }
+
+        None
+    }
+
+    /// Find the line range (start, end) of a Python object definition.
+    /// `min_indent` is the minimum indentation level to look for (0 for top-level, 1 for methods inside a class)
+    fn find_python_object_range(&self, lines: &[&str], name: &str, min_indent: usize) -> Option<(usize, usize)> {
+        let def_pattern = format!("def {}(", name);
+        let class_pattern = format!("class {}:", name);
+        let class_pattern_paren = format!("class {}(", name);
+
+        let mut start_line = None;
+        let mut start_indent = 0;
+
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+            let indent_level = indent / 4; // Assuming 4-space indentation (also handle tabs below)
+
+            // Check if this line defines the object we're looking for
+            if trimmed.starts_with(&def_pattern)
+                || trimmed.starts_with(&class_pattern)
+                || trimmed.starts_with(&class_pattern_paren)
+            {
+                // Check if indentation level matches what we're looking for
+                if indent_level >= min_indent {
+                    start_line = Some(i);
+                    start_indent = indent;
+                    break;
+                }
+            }
+        }
+
+        let start = start_line?;
+
+        // Find where this object ends (next line at same or lower indentation that's not empty/comment)
+        let mut end = lines.len();
+        for (i, line) in lines.iter().enumerate().skip(start + 1) {
+            let trimmed = line.trim();
+
+            // Skip empty lines and comments
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            let indent = line.len() - line.trim_start().len();
+
+            // If we hit a line with same or less indentation, we've exited the object
+            // But we need to handle decorators - they start at same indent as def/class
+            if indent <= start_indent {
+                // Check if it's a decorator for the same object (shouldn't happen after start)
+                // or if it's a new definition/statement
+                let is_decorator = trimmed.starts_with('@');
+                if !is_decorator {
+                    end = i;
+                    break;
+                }
+            }
+        }
+
+        // Trim trailing empty lines
+        while end > start + 1 && lines[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+
+        Some((start, end))
     }
 
     /// Render inline RST markup (bold, italic, code, roles, references).
@@ -1561,5 +1889,424 @@ Type: `Union[int, str]`
             "ref in blockquote should link to after.html#after, got: {}",
             html
         );
+    }
+
+    #[test]
+    fn test_ref_role_in_note_directive() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"Title
+=====
+
+.. note::
+
+    This tutorial is intended for a reader that is well versed in the Django basics of the ORM,
+    urls routing, function based views, and templates.
+
+    It is also expected that you have already installed iommi in your project. Read section 1 of :ref:`Getting started <getting-started>`.
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // The note directive should be rendered as an admonition
+        assert!(
+            html.contains("admonition note"),
+            "note directive should be rendered as admonition, got: {}",
+            html
+        );
+
+        // The :ref: should link to getting-started.html#getting-started
+        assert!(
+            html.contains("href=\"getting-started.html#getting-started\""),
+            "ref should link to getting-started.html#getting-started, got: {}",
+            html
+        );
+
+        // The link text should be "Getting started" wrapped in std-ref span
+        assert!(
+            html.contains("<span class=\"std std-ref\">Getting started</span></a>"),
+            "link text should be 'Getting started' in std-ref span, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_literalinclude_basic() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with a source file to include
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(&source_file, "def hello():\n    print('Hello, World!')\n").unwrap();
+
+        // Create an RST file that includes the source file
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should include the file content with syntax highlighting
+        assert!(
+            html.contains("highlight-python"),
+            "should have python highlighting class, got: {}",
+            html
+        );
+        assert!(
+            html.contains("hello") || html.contains("Hello"),
+            "should contain the function name, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_literalinclude_with_lines() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with a source file to include
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            "# Line 1\n# Line 2\n# Line 3\n# Line 4\n# Line 5\n",
+        )
+        .unwrap();
+
+        // Create an RST file that includes only lines 2-4
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :lines: 2-4
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain lines 2, 3, 4 but NOT line 1 or 5
+        assert!(html.contains("Line 2"), "should contain Line 2, got: {}", html);
+        assert!(html.contains("Line 3"), "should contain Line 3, got: {}", html);
+        assert!(html.contains("Line 4"), "should contain Line 4, got: {}", html);
+        assert!(!html.contains("Line 1"), "should NOT contain Line 1, got: {}", html);
+        assert!(!html.contains("Line 5"), "should NOT contain Line 5, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_with_start_after_end_before() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with a source file to include
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            "# HEADER\ndef main():\n    # START\n    print('included')\n    # END\n    pass\n",
+        )
+        .unwrap();
+
+        // Create an RST file that includes only content between markers
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :start-after: # START
+   :end-before: # END
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain the print line but NOT the markers or other content
+        assert!(html.contains("included"), "should contain 'included', got: {}", html);
+        assert!(!html.contains("HEADER"), "should NOT contain HEADER, got: {}", html);
+        assert!(!html.contains("# START"), "should NOT contain # START marker, got: {}", html);
+        assert!(!html.contains("# END"), "should NOT contain # END marker, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_with_caption() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with a source file to include
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(&source_file, "print('hello')\n").unwrap();
+
+        // Create an RST file with a caption
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :caption: My Example Code
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should have a caption
+        assert!(
+            html.contains("code-block-caption"),
+            "should have caption class, got: {}",
+            html
+        );
+        assert!(
+            html.contains("My Example Code"),
+            "should contain caption text, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_literalinclude_file_not_found() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create an RST file that references a non-existent file
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: nonexistent.py
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should have an error comment
+        assert!(
+            html.contains("literalinclude error"),
+            "should have error message, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_literalinclude_pyobject_function() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            r#"# Header comment
+
+def first_function():
+    """First function docstring."""
+    return 1
+
+def target_function():
+    """Target function docstring."""
+    x = 1
+    y = 2
+    return x + y
+
+def another_function():
+    """Another function."""
+    pass
+"#,
+        )
+        .unwrap();
+
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :pyobject: target_function
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain target_function content
+        assert!(html.contains("target_function"), "should contain target_function, got: {}", html);
+        assert!(html.contains("Target function docstring"), "should contain docstring, got: {}", html);
+        assert!(html.contains("x + y") || html.contains("return"), "should contain function body, got: {}", html);
+
+        // Should NOT contain other functions
+        assert!(!html.contains("first_function"), "should NOT contain first_function, got: {}", html);
+        assert!(!html.contains("another_function"), "should NOT contain another_function, got: {}", html);
+        assert!(!html.contains("Header comment"), "should NOT contain header comment, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_pyobject_class() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            r#"def standalone():
+    pass
+
+class MyClass:
+    """A sample class."""
+
+    def __init__(self):
+        self.value = 42
+
+    def method(self):
+        return self.value
+
+class OtherClass:
+    pass
+"#,
+        )
+        .unwrap();
+
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :pyobject: MyClass
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain MyClass content
+        assert!(html.contains("MyClass"), "should contain MyClass, got: {}", html);
+        assert!(html.contains("sample class"), "should contain class docstring, got: {}", html);
+        assert!(html.contains("__init__"), "should contain __init__ method, got: {}", html);
+        // Note: "self.value" gets split by syntax highlighting spans, so check for "value" instead
+        assert!(html.contains("value"), "should contain method body, got: {}", html);
+
+        // Should NOT contain other classes or functions
+        assert!(!html.contains("standalone"), "should NOT contain standalone function, got: {}", html);
+        assert!(!html.contains("OtherClass"), "should NOT contain OtherClass, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_pyobject_method() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            r#"class MyClass:
+    def __init__(self):
+        self.value = 42
+
+    def target_method(self):
+        """The target method."""
+        return self.value * 2
+
+    def other_method(self):
+        pass
+"#,
+        )
+        .unwrap();
+
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :pyobject: MyClass.target_method
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should contain target_method content
+        assert!(html.contains("target_method"), "should contain target_method, got: {}", html);
+        assert!(html.contains("target method"), "should contain method docstring, got: {}", html);
+
+        // Should NOT contain other methods
+        assert!(!html.contains("__init__"), "should NOT contain __init__, got: {}", html);
+        assert!(!html.contains("other_method"), "should NOT contain other_method, got: {}", html);
     }
 }

@@ -574,6 +574,7 @@ impl SphinxBuilder {
 
         // Render document content to HTML with document titles for toctree
         let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(self.source_dir.clone());
         {
             let titles = self.document_titles.lock().unwrap();
             for (path, title) in titles.iter() {
@@ -676,7 +677,8 @@ impl SphinxBuilder {
         // Render toctree for sidebar
         let toctree_html = {
             let nav = self.navigation.lock().unwrap();
-            let options = ToctreeOptions::default();
+            let mut options = ToctreeOptions::default();
+            options.current_doc = Some(doc_path.to_string());
             nav.render_toctree(&options)
         };
 
