@@ -225,6 +225,20 @@ impl HtmlRenderer {
                 let rendered_content = self.render_rst_inline(content);
                 format!("<blockquote>\n<p>{}</p>\n</blockquote>", rendered_content)
             }
+
+            RstNode::DefinitionList { items, .. } => {
+                let mut html = String::from("<dl class=\"simple\">\n");
+                for item in items {
+                    let rendered_term = self.render_rst_inline(&item.term);
+                    let rendered_def = self.render_rst_inline(&item.definition);
+                    html.push_str(&format!(
+                        "<dt>{}</dt><dd><p>{}</p>\n</dd>\n",
+                        rendered_term, rendered_def
+                    ));
+                }
+                html.push_str("</dl>");
+                html
+            }
         }
     }
 
@@ -290,7 +304,7 @@ impl HtmlRenderer {
                 let href = format!("{}.html", path);
 
                 html.push_str(&format!(
-                    "<li><a href=\"{}\">{}</a></li>\n",
+                    "<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"{}\">{}</a></li>\n",
                     html_escape::encode_text(&href),
                     html_escape::encode_text(&display_title)
                 ));

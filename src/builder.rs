@@ -721,13 +721,21 @@ impl SphinxBuilder {
         ctx.insert("toc", &page_toc_html).ok();
         ctx.insert("display_toc", display_toc).ok();
 
-        // Logo and favicon
-        if let Some(ref logo) = self.config.html_logo {
-            ctx.insert("logo_url", logo).ok();
-            ctx.insert("logo_alt", "Logo").ok();
+        // Logo and favicon - use just the filename since we copy to _static
+        if let Some(ref logo_path) = self.config.html_logo {
+            if let Some(filename) = std::path::Path::new(logo_path).file_name() {
+                if let Some(filename_str) = filename.to_str() {
+                    ctx.insert("logo_url", filename_str).ok();
+                    ctx.insert("logo_alt", "Logo").ok();
+                }
+            }
         }
-        if let Some(ref favicon) = self.config.html_favicon {
-            ctx.insert("favicon_url", favicon).ok();
+        if let Some(ref favicon_path) = self.config.html_favicon {
+            if let Some(filename) = std::path::Path::new(favicon_path).file_name() {
+                if let Some(filename_str) = filename.to_str() {
+                    ctx.insert("favicon_url", filename_str).ok();
+                }
+            }
         }
 
         // Copyright and attribution
@@ -905,6 +913,32 @@ impl SphinxBuilder {
         if project_static.exists() {
             info!("Copying project static assets from {}", project_static.display());
             self.copy_dir_to_static(&project_static, &static_output_dir).await?;
+        }
+
+        // Copy logo to _static if specified (Sphinx behavior)
+        if let Some(ref logo_path) = self.config.html_logo {
+            let logo_src = self.source_dir.join(logo_path);
+            if logo_src.exists() {
+                let logo_filename = logo_src.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid logo path"))?;
+                let logo_dest = static_output_dir.join(logo_filename);
+                tokio::fs::copy(&logo_src, &logo_dest).await
+                    .with_context(|| format!("Failed to copy logo from {} to {}", logo_src.display(), logo_dest.display()))?;
+                info!("Copied logo to {}", logo_dest.display());
+            }
+        }
+
+        // Copy favicon to _static if specified (Sphinx behavior)
+        if let Some(ref favicon_path) = self.config.html_favicon {
+            let favicon_src = self.source_dir.join(favicon_path);
+            if favicon_src.exists() {
+                let favicon_filename = favicon_src.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid favicon path"))?;
+                let favicon_dest = static_output_dir.join(favicon_filename);
+                tokio::fs::copy(&favicon_src, &favicon_dest).await
+                    .with_context(|| format!("Failed to copy favicon from {} to {}", favicon_src.display(), favicon_dest.display()))?;
+                info!("Copied favicon to {}", favicon_dest.display());
+            }
         }
 
         Ok(())

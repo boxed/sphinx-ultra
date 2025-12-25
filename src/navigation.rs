@@ -265,7 +265,7 @@ impl NavigationBuilder {
         }
 
         let mut html = format!(
-            "<li class=\"toctree-l{}\"><a href=\"{}.html\">{}</a>",
+            "<li class=\"toctree-l{}\"><a class=\"reference internal\" href=\"{}.html\">{}</a>",
             depth,
             html_escape::encode_text(&node.doc_path),
             html_escape::encode_text(&node.title)

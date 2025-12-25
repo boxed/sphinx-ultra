@@ -209,13 +209,40 @@ impl Parser {
                 continue;
             }
 
-            // Default to paragraph
-            let (paragraph_content, consumed_lines) = self.parse_paragraph(&lines[i..]);
+            // Check for definition list (term followed by indented definition)
+            // Pattern: non-indented line followed by indented line(s)
+            let (paragraph_content, para_consumed) = self.parse_paragraph(&lines[i..]);
+            let next_idx = i + para_consumed;
+
+            // Check if this could be a definition list term
+            if next_idx < lines.len() {
+                let next_line = lines[next_idx];
+                // Definition follows if next line is indented (but not empty)
+                if !next_line.trim().is_empty()
+                    && (next_line.starts_with("    ") || next_line.starts_with("\t"))
+                {
+                    // This is a definition list - parse the definition
+                    let (def_content, def_consumed) = self.parse_blockquote(&lines[next_idx..]);
+
+                    // Create definition list item
+                    nodes.push(RstNode::DefinitionList {
+                        items: vec![crate::document::DefinitionItem {
+                            term: paragraph_content.clone(),
+                            definition: def_content.trim().to_string(),
+                        }],
+                        line: i + 1,
+                    });
+                    i += para_consumed + def_consumed;
+                    continue;
+                }
+            }
+
+            // Regular paragraph
             nodes.push(RstNode::Paragraph {
                 content: paragraph_content,
                 line: i + 1,
             });
-            i += consumed_lines;
+            i += para_consumed;
         }
 
         Ok(DocumentContent::RestructuredText(RstContent {
@@ -363,6 +390,14 @@ impl Parser {
         for line in lines {
             let trimmed = line.trim();
             if trimmed.is_empty() {
+                break;
+            }
+
+            // Stop at indented lines (could be start of definition, blockquote, etc.)
+            // But only after we have some content (first line can't trigger this)
+            if consumed_lines > 0
+                && (line.starts_with("    ") || line.starts_with("\t"))
+            {
                 break;
             }
 

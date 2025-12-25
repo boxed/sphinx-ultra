@@ -198,6 +198,20 @@ pub enum RstNode {
         content: String,
         line: usize,
     },
+    /// Definition list (term with indented definition)
+    DefinitionList {
+        items: Vec<DefinitionItem>,
+        line: usize,
+    },
+}
+
+/// A single item in a definition list
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefinitionItem {
+    /// The term being defined
+    pub term: String,
+    /// The definition (can contain inline markup)
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
