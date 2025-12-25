@@ -5,6 +5,9 @@ use crate::document::{DocumentContent, MarkdownContent, MarkdownNode, RstContent
 use crate::roles::{Role, RoleRegistry};
 use regex::Regex;
 use std::collections::HashMap;
+use syntect::highlighting::ThemeSet;
+use syntect::html::highlighted_html_for_string;
+use syntect::parsing::SyntaxSet;
 
 /// HTML renderer that converts parsed AST to HTML.
 pub struct HtmlRenderer {
@@ -12,6 +15,12 @@ pub struct HtmlRenderer {
     role_registry: RoleRegistry,
     /// Map of document paths to their titles (e.g., "intro" -> "Introduction")
     document_titles: HashMap<String, String>,
+    /// Syntax definitions for code highlighting
+    syntax_set: SyntaxSet,
+    /// Theme for code highlighting
+    theme_set: ThemeSet,
+    /// Name of the theme to use for highlighting
+    theme_name: String,
 }
 
 impl Default for HtmlRenderer {
@@ -27,6 +36,44 @@ impl HtmlRenderer {
             directive_registry: DirectiveRegistry::new(),
             role_registry: RoleRegistry::new(),
             document_titles: HashMap::new(),
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
+            theme_name: "base16-ocean.dark".to_string(),
+        }
+    }
+
+    /// Set the syntax highlighting theme.
+    /// Available themes: "InspiredGitHub", "Solarized (dark)", "Solarized (light)",
+    /// "base16-ocean.dark", "base16-eighties.dark", "base16-mocha.dark", "base16-ocean.light"
+    pub fn set_theme(&mut self, theme_name: &str) {
+        if self.theme_set.themes.contains_key(theme_name) {
+            self.theme_name = theme_name.to_string();
+        }
+    }
+
+    /// Highlight code with syntax highlighting, falling back to plain text if language is unknown.
+    fn highlight_code(&self, code: &str, language: Option<&str>) -> String {
+        let theme = &self.theme_set.themes[&self.theme_name];
+
+        // Try to find a syntax for the language
+        let syntax = language
+            .and_then(|lang| {
+                // Try exact match first
+                self.syntax_set.find_syntax_by_token(lang)
+                    // Then try by extension
+                    .or_else(|| self.syntax_set.find_syntax_by_extension(lang))
+            })
+            // Fall back to plain text
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+
+        // Generate highlighted HTML
+        match highlighted_html_for_string(code, &self.syntax_set, syntax, theme) {
+            Ok(html) => html,
+            Err(_) => {
+                // Fallback to plain code block if highlighting fails
+                let escaped = html_escape::encode_text(code);
+                format!("<pre><code>{}</code></pre>", escaped)
+            }
         }
     }
 
@@ -85,17 +132,7 @@ impl HtmlRenderer {
 
             RstNode::CodeBlock {
                 language, content, ..
-            } => {
-                let escaped = html_escape::encode_text(content);
-                match language {
-                    Some(lang) => format!(
-                        "<pre><code class=\"language-{}\">{}</code></pre>",
-                        html_escape::encode_text(lang),
-                        escaped
-                    ),
-                    None => format!("<pre><code>{}</code></pre>", escaped),
-                }
-            }
+            } => self.highlight_code(content, language.as_deref()),
 
             RstNode::List {
                 items,
@@ -378,17 +415,7 @@ impl HtmlRenderer {
 
             MarkdownNode::CodeBlock {
                 language, content, ..
-            } => {
-                let escaped = html_escape::encode_text(content);
-                match language {
-                    Some(lang) => format!(
-                        "<pre><code class=\"language-{}\">{}</code></pre>",
-                        html_escape::encode_text(lang),
-                        escaped
-                    ),
-                    None => format!("<pre><code>{}</code></pre>", escaped),
-                }
-            }
+            } => self.highlight_code(content, language.as_deref()),
 
             MarkdownNode::List {
                 items,
@@ -550,9 +577,53 @@ mod tests {
             line: 1,
         };
         let html = renderer.render_rst_node(&node);
-        assert!(html.contains("language-python"));
-        // html_escape::encode_text doesn't escape single quotes
-        assert!(html.contains("print('hello')"));
+        // Syntect generates <pre style="..."> with inline styles
+        assert!(html.contains("<pre"), "should have pre tag");
+        // Code content should be present (possibly with span styling)
+        assert!(html.contains("print"), "should contain 'print'");
+        assert!(html.contains("hello"), "should contain 'hello'");
+        // Syntect uses inline styles for syntax highlighting
+        assert!(html.contains("style="), "should have inline styles for highlighting");
+    }
+
+    #[test]
+    fn test_python_syntax_highlighting() {
+        let renderer = HtmlRenderer::new();
+
+        // Test with Python code that has multiple syntactic elements
+        let python_code = r#"def greet(name):
+    """A docstring."""
+    if name:
+        print(f"Hello, {name}!")
+    return True"#;
+
+        let node = RstNode::CodeBlock {
+            language: Some("python".to_string()),
+            content: python_code.to_string(),
+            line: 1,
+        };
+        let html = renderer.render_rst_node(&node);
+
+        // Verify syntect found Python syntax (not plain text)
+        // Python keywords like 'def', 'if', 'return' should be in colored spans
+        assert!(html.contains("<span"), "should have span elements for syntax highlighting");
+
+        // Count the number of styled spans - Python code should have many
+        let span_count = html.matches("<span style=").count();
+        assert!(span_count >= 5, "Python code should have multiple highlighted spans, got {}", span_count);
+
+        // Verify different colors are used (different syntax elements get different colors)
+        // Extract all color values from style attributes
+        let colors: Vec<&str> = html.match_indices("color:#")
+            .map(|(i, _)| &html[i+7..i+13])
+            .collect();
+        let unique_colors: std::collections::HashSet<_> = colors.iter().collect();
+        assert!(unique_colors.len() >= 2, "should have at least 2 different colors for syntax highlighting, got {:?}", unique_colors);
+
+        // Verify the code content is present
+        assert!(html.contains("greet"), "should contain function name");
+        assert!(html.contains("docstring"), "should contain docstring text");
+        assert!(html.contains("Hello"), "should contain string content");
     }
 
     #[test]
@@ -620,14 +691,67 @@ Now I can display a list of Bar in a table."#;
         // Should have proper heading
         assert!(html.contains("<h3 id=\"test-document\">Test Document</h3>"));
 
-        // Should have code block with proper tags, NOT as paragraph
-        assert!(html.contains("<pre><code"));
-        assert!(html.contains("class Bar(models.Model):"));
+        // Should have code block with pre tag (syntect generates <pre style=...>)
+        assert!(html.contains("<pre"), "should have pre tag");
+        assert!(html.contains("Bar"), "should contain code content");
         assert!(!html.contains("<p>.. code-block::"), "Directive should not appear as paragraph");
         assert!(!html.contains("<p>class Bar"), "Code should not be in paragraph tags");
 
         // Should have the final paragraph
         assert!(html.contains("Now I can display"));
+    }
+
+    #[test]
+    fn test_code_block_directive_python_syntax_highlighting() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"Code Example
+============
+
+.. code-block:: python
+
+   def greet(name):
+       """Say hello."""
+       if name:
+           print(f"Hello, {name}!")
+       return True
+"#;
+
+        // Create a temporary file for the parser
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // Verify syntax highlighting is applied
+        assert!(html.contains("<pre style="), "should have pre tag with inline styles");
+        assert!(html.contains("<span style="), "should have span elements with syntax colors");
+
+        // Count styled spans - Python code should have multiple highlighted elements
+        let span_count = html.matches("<span style=").count();
+        assert!(span_count >= 5, "Python code should have multiple highlighted spans, got {}", span_count);
+
+        // Verify different colors are used for different syntax elements
+        let colors: Vec<&str> = html.match_indices("color:#")
+            .map(|(i, _)| &html[i+7..i+13])
+            .collect();
+        let unique_colors: std::collections::HashSet<_> = colors.iter().collect();
+        assert!(unique_colors.len() >= 2, "should have multiple colors for syntax highlighting, got {:?}", unique_colors);
+
+        // Verify code content is present
+        assert!(html.contains("greet"), "should contain function name");
+        assert!(html.contains("hello"), "should contain docstring text");
+        assert!(html.contains("Hello"), "should contain string content");
+
+        // Verify it's wrapped in highlight div
+        assert!(html.contains("highlight-python"), "should have highlight-python wrapper");
     }
 
     #[test]

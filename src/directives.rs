@@ -2,6 +2,9 @@ use anyhow::{anyhow, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use syntect::highlighting::ThemeSet;
+use syntect::html::highlighted_html_for_string;
+use syntect::parsing::SyntaxSet;
 
 /// Directive validation module for comprehensive validation
 pub mod validation;
@@ -97,7 +100,7 @@ impl DirectiveRegistry {
         self.register(Box::new(GenericAdmonitionDirective));
 
         // Code directives
-        self.register(Box::new(CodeBlockDirective));
+        self.register(Box::new(CodeBlockDirective::default()));
         self.register(Box::new(LiteralIncludeDirective));
         self.register(Box::new(HighlightDirective));
 
@@ -265,7 +268,40 @@ impl DirectiveProcessor for GenericAdmonitionDirective {
 }
 
 // Code Block Directive
-struct CodeBlockDirective;
+struct CodeBlockDirective {
+    syntax_set: SyntaxSet,
+    theme_set: ThemeSet,
+}
+
+impl Default for CodeBlockDirective {
+    fn default() -> Self {
+        Self {
+            syntax_set: SyntaxSet::load_defaults_newlines(),
+            theme_set: ThemeSet::load_defaults(),
+        }
+    }
+}
+
+impl CodeBlockDirective {
+    fn highlight_code(&self, code: &str, language: &str) -> String {
+        let theme = &self.theme_set.themes["base16-ocean.dark"];
+
+        // Try to find a syntax for the language
+        let syntax = self.syntax_set.find_syntax_by_token(language)
+            .or_else(|| self.syntax_set.find_syntax_by_extension(language))
+            .unwrap_or_else(|| self.syntax_set.find_syntax_plain_text());
+
+        // Generate highlighted HTML
+        match highlighted_html_for_string(code, &self.syntax_set, syntax, theme) {
+            Ok(html) => html,
+            Err(_) => {
+                // Fallback to plain code block if highlighting fails
+                let escaped = html_escape::encode_text(code);
+                format!("<pre><code>{}</code></pre>", escaped)
+            }
+        }
+    }
+}
 
 impl DirectiveProcessor for CodeBlockDirective {
     fn process(&self, directive: &Directive) -> Result<String> {
@@ -287,11 +323,12 @@ impl DirectiveProcessor for CodeBlockDirective {
             ));
         }
 
+        // Use syntect for syntax highlighting
+        let highlighted = self.highlight_code(&content, language);
         html.push_str(&format!(
-            "<div class=\"highlight-{}\"><pre><code class=\"language-{}\">{}</code></pre></div>",
+            "<div class=\"highlight-{}\">{}</div>",
             language,
-            language,
-            html_escape::encode_text(&content)
+            highlighted
         ));
 
         Ok(html)
