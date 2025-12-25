@@ -121,11 +121,16 @@ impl Parser {
             // Check for title (underlined with =, -, ~, etc.)
             if i + 1 < lines.len() {
                 let next_line = lines[i + 1];
+                // Use chars().count() for proper Unicode character counting
+                // (handles non-breaking spaces and other multi-byte characters)
+                let title_char_count = trimmed.chars().count();
+                let underline_char_count = next_line.trim().chars().count();
+
                 if !next_line.trim().is_empty()
-                    && next_line.chars().all(|c| "=-~^\"'*+#<>".contains(c))
-                    && next_line.len() >= trimmed.len()
+                    && next_line.trim().chars().all(|c| "=-~^\"'*+#<>".contains(c))
+                    && underline_char_count >= title_char_count
                 {
-                    let level = self.get_rst_title_level(next_line.chars().next().unwrap());
+                    let level = self.get_rst_title_level(next_line.trim().chars().next().unwrap());
                     nodes.push(RstNode::Title {
                         text: trimmed.to_string(),
                         level,
@@ -557,5 +562,53 @@ Even more text.
 
         // First title becomes the document title
         assert_eq!(doc.title, "Main Title");
+    }
+
+    #[test]
+    fn test_title_with_inline_markup_and_caret_underline() {
+        let parser = create_parser();
+        let content = r#"`attrs`       (:ref:`evaluated <evaluate>`)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Type: :doc:`Attrs`
+
+    See :ref:`attributes <attributes>`
+"#;
+        let doc = parse_rst_content(&parser, content);
+
+        // Should recognize the title with inline markup
+        assert_eq!(doc.title, "`attrs`       (:ref:`evaluated <evaluate>`)");
+
+        // Count the titles in the AST
+        if let crate::document::DocumentContent::RestructuredText(rst) = &doc.content {
+            let title_count = rst.ast.iter().filter(|node| {
+                matches!(node, RstNode::Title { .. })
+            }).count();
+            assert_eq!(title_count, 1, "Should have exactly one title");
+        } else {
+            panic!("Expected RST content");
+        }
+    }
+
+    #[test]
+    fn test_title_with_non_breaking_spaces() {
+        let parser = create_parser();
+        // Use actual non-breaking spaces (U+00A0) between `attrs` and (:ref:
+        let content = "`attrs`\u{00A0}\u{00A0}\u{00A0}\u{00A0}\u{00A0}\u{00A0}\u{00A0}(:ref:`evaluated <evaluate>`)\n^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nType: :doc:`Attrs`\n";
+        let doc = parse_rst_content(&parser, content);
+
+        // Should still recognize the title
+        assert!(!doc.title.is_empty() && doc.title != "Untitled",
+            "Title should be recognized, got: {}", doc.title);
+
+        // Count the titles in the AST
+        if let crate::document::DocumentContent::RestructuredText(rst) = &doc.content {
+            let title_count = rst.ast.iter().filter(|node| {
+                matches!(node, RstNode::Title { .. })
+            }).count();
+            assert_eq!(title_count, 1, "Should have exactly one title, got {}", title_count);
+        } else {
+            panic!("Expected RST content");
+        }
     }
 }
