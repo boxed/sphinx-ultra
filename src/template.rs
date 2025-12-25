@@ -129,10 +129,16 @@ impl TemplateEngine {
                         MinijinjaError::new(ErrorKind::InvalidOperation, "target must be string")
                     })?;
 
-                let resource = args
-                    .get(1)
-                    .and_then(|v| v.as_str().map(|s| s == "true"))
-                    .unwrap_or(false);
+                // Handle resource argument - can be boolean true or string "true"
+                let resource = args.get(1).map_or(false, |v| {
+                    // Check if it's a string "true" first
+                    if let Some(s) = v.as_str() {
+                        s == "true"
+                    } else {
+                        // Otherwise use is_true() which handles booleans
+                        v.is_true()
+                    }
+                });
 
                 // Simple relative path calculation
                 let path = if resource {
@@ -143,7 +149,8 @@ impl TemplateEngine {
                     format!("{}.html", target)
                 };
 
-                Ok(Value::from(path))
+                // Return as safe string to prevent over-escaping of URL paths
+                Ok(Value::from_safe_string(path))
             },
         );
 

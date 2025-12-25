@@ -115,7 +115,9 @@ impl HtmlRenderer {
     fn render_rst_node(&self, node: &RstNode) -> String {
         match node {
             RstNode::Title { text, level, .. } => {
-                let slug = slugify(text);
+                // Extract plain text for slug generation (strips RST markup)
+                let plain_text = extract_plain_text_for_slug(text);
+                let slug = slugify(&plain_text);
                 let level = (*level).min(6).max(1);
                 // Process inline markup in titles (including roles)
                 let rendered_text = self.render_rst_inline(text);
@@ -396,12 +398,12 @@ impl HtmlRenderer {
             .replace_all(&result, "<code>$1</code>")
             .to_string();
 
-        // Process single backtick inline code: `code` -> <span class="pre">code</span>
+        // Process single backtick inline code: `code` -> <code class="code docutils literal notranslate"><span class="pre">code</span></code>
         // References (`text`_) were already processed and replaced with placeholders,
         // so we can safely match remaining single backticks
         let single_code_re = Regex::new(r"`([^`]+)`").unwrap();
         result = single_code_re
-            .replace_all(&result, "<span class=\"pre\">$1</span>")
+            .replace_all(&result, "<code class=\"code docutils literal notranslate\"><span class=\"pre\">$1</span></code>")
             .to_string();
 
         // Process bold: **text** (must be done before italic)
@@ -551,6 +553,29 @@ impl HtmlRenderer {
     }
 }
 
+/// Extract plain text from RST markup for use in slugs.
+/// Strips inline code backticks, roles like :ref: and :doc:, etc.
+fn extract_plain_text_for_slug(text: &str) -> String {
+    let mut result = text.to_string();
+
+    // Remove RST roles like :ref:`text <target>` -> text
+    // Match :role:`display text <target>` or :role:`target`
+    // Use a non-greedy match and trim the display text
+    let role_re = regex::Regex::new(r":(\w+):`([^`<]+?)(?:\s*<[^>]+>)?`").unwrap();
+    result = role_re
+        .replace_all(&result, |caps: &regex::Captures| caps[2].trim().to_string())
+        .to_string();
+
+    // Remove inline code backticks: `text` -> text
+    let code_re = regex::Regex::new(r"`([^`]+)`").unwrap();
+    result = code_re.replace_all(&result, "$1").to_string();
+
+    // Remove any remaining backticks
+    result = result.replace('`', "");
+
+    result
+}
+
 /// Convert text to a URL-safe slug for anchor IDs.
 fn slugify(text: &str) -> String {
     text.to_lowercase()
@@ -558,7 +583,8 @@ fn slugify(text: &str) -> String {
         .map(|c| {
             if c.is_alphanumeric() {
                 c
-            } else if c.is_whitespace() || c == '-' || c == '_' {
+            } else if c.is_whitespace() || c == '-' || c == '_' || c == '.' {
+                // Treat periods as word separators (e.g., "Action.button" -> "action-button")
                 '-'
             } else {
                 '\0'
@@ -582,6 +608,25 @@ mod tests {
         assert_eq!(slugify("Introduction"), "introduction");
         assert_eq!(slugify("API Reference"), "api-reference");
         assert_eq!(slugify("foo_bar-baz"), "foo-bar-baz");
+        // Periods should become hyphens for class.method style names
+        assert_eq!(slugify("Action.button"), "action-button");
+        assert_eq!(slugify("Action.delete"), "action-delete");
+    }
+
+    #[test]
+    fn test_extract_plain_text_for_slug() {
+        // Role with display text and target
+        assert_eq!(
+            extract_plain_text_for_slug("`after` (:ref:`evaluated <evaluate>`)"),
+            "after (evaluated)"
+        );
+        // Just inline code
+        assert_eq!(extract_plain_text_for_slug("`display_name`"), "display_name");
+        // Multiple elements
+        assert_eq!(
+            extract_plain_text_for_slug("`foo` and :doc:`Bar`"),
+            "foo and Bar"
+        );
     }
 
     #[test]
@@ -703,11 +748,11 @@ mod tests {
     fn test_rst_single_backtick_inline_code() {
         let renderer = HtmlRenderer::new();
 
-        // Single backticks should render as <span class="pre">
+        // Single backticks should render as <code class="code docutils literal notranslate"><span class="pre">
         let result = renderer.render_rst_inline("Use `my_function()` to call it.");
         assert!(
-            result.contains("<span class=\"pre\">my_function()</span>"),
-            "single backticks should render as span.pre, got: {}",
+            result.contains("<code class=\"code docutils literal notranslate\"><span class=\"pre\">my_function()</span></code>"),
+            "single backticks should render as code.docutils, got: {}",
             result
         );
         assert!(!result.contains("`my_function()`"), "backticks should not appear in output");
@@ -795,8 +840,8 @@ Now I can display a list of Bar in a table."#;
         let renderer = HtmlRenderer::new();
         let html = renderer.render_document_content(&doc.content);
 
-        // Should have proper heading
-        assert!(html.contains("<h3 id=\"test-document\">Test Document</h3>"));
+        // Should have proper heading (= is first underline char, so level 1)
+        assert!(html.contains("<h1 id=\"test-document\">Test Document</h1>"));
 
         // Should have code block with pre tag (syntect generates <pre style=...>)
         assert!(html.contains("<pre"), "should have pre tag");

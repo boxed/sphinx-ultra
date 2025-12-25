@@ -87,6 +87,10 @@ impl Parser {
         let mut directives = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
 
+        // Track underline characters in order of first appearance to determine title levels
+        // The first underline character encountered becomes level 1, second becomes level 2, etc.
+        let mut seen_underline_chars: Vec<char> = Vec::new();
+
         let mut i = 0;
         while i < lines.len() {
             let line = lines[i];
@@ -130,7 +134,15 @@ impl Parser {
                     && next_line.trim().chars().all(|c| "=-~^\"'*+#<>".contains(c))
                     && underline_char_count >= title_char_count
                 {
-                    let level = self.get_rst_title_level(next_line.trim().chars().next().unwrap());
+                    let underline_char = next_line.trim().chars().next().unwrap();
+                    // Determine level based on order of first appearance
+                    let level = if let Some(pos) = seen_underline_chars.iter().position(|&c| c == underline_char) {
+                        pos + 1
+                    } else {
+                        seen_underline_chars.push(underline_char);
+                        seen_underline_chars.len()
+                    };
+
                     nodes.push(RstNode::Title {
                         text: trimmed.to_string(),
                         level,
@@ -326,17 +338,6 @@ impl Parser {
         Ok((directive, consumed_lines))
     }
 
-    fn get_rst_title_level(&self, char: char) -> usize {
-        match char {
-            '#' => 1,
-            '*' => 2,
-            '=' => 3,
-            '-' => 4,
-            '^' => 5,
-            '"' => 6,
-            _ => 7,
-        }
-    }
 
     fn parse_code_block(&self, lines: &[&str]) -> (String, usize) {
         let mut content = String::new();
@@ -567,21 +568,83 @@ mod tests {
     }
 
     #[test]
-    fn test_title_levels() {
+    fn test_title_levels_by_order() {
+        // RST title levels are determined by the order underline characters
+        // first appear in the document, not by the character itself.
         let parser = create_parser();
 
-        // # is level 1
-        assert_eq!(parser.get_rst_title_level('#'), 1);
-        // * is level 2
-        assert_eq!(parser.get_rst_title_level('*'), 2);
-        // = is level 3
-        assert_eq!(parser.get_rst_title_level('='), 3);
-        // - is level 4
-        assert_eq!(parser.get_rst_title_level('-'), 4);
-        // ^ is level 5
-        assert_eq!(parser.get_rst_title_level('^'), 5);
-        // " is level 6
-        assert_eq!(parser.get_rst_title_level('"'), 6);
+        // First underline character becomes level 1
+        let content = "Title One\n=========\n\nText\n\nTitle Two\n---------\n\nMore text";
+        let doc = parse_rst_content(&parser, content);
+
+        // Check that we have two titles
+        if let DocumentContent::RestructuredText(rst) = &doc.content {
+            let titles: Vec<_> = rst.ast.iter().filter_map(|n| {
+                if let RstNode::Title { text, level, .. } = n {
+                    Some((text.clone(), *level))
+                } else {
+                    None
+                }
+            }).collect();
+
+            assert_eq!(titles.len(), 2);
+            assert_eq!(titles[0], ("Title One".to_string(), 1)); // = is first, so level 1
+            assert_eq!(titles[1], ("Title Two".to_string(), 2)); // - is second, so level 2
+        } else {
+            panic!("Expected RST content");
+        }
+    }
+
+    #[test]
+    fn test_title_levels_different_order() {
+        // Test that a different character order produces different levels
+        let parser = create_parser();
+
+        // Here - comes first, so it's level 1
+        let content = "Title One\n---------\n\nText\n\nTitle Two\n=========\n\nMore text";
+        let doc = parse_rst_content(&parser, content);
+
+        if let DocumentContent::RestructuredText(rst) = &doc.content {
+            let titles: Vec<_> = rst.ast.iter().filter_map(|n| {
+                if let RstNode::Title { text, level, .. } = n {
+                    Some((text.clone(), *level))
+                } else {
+                    None
+                }
+            }).collect();
+
+            assert_eq!(titles.len(), 2);
+            assert_eq!(titles[0], ("Title One".to_string(), 1)); // - is first, so level 1
+            assert_eq!(titles[1], ("Title Two".to_string(), 2)); // = is second, so level 2
+        } else {
+            panic!("Expected RST content");
+        }
+    }
+
+    #[test]
+    fn test_same_underline_same_level() {
+        // Same underline character should produce same level
+        let parser = create_parser();
+
+        let content = "First\n=====\n\nText\n\nSecond\n------\n\nText\n\nThird\n=====\n\nMore";
+        let doc = parse_rst_content(&parser, content);
+
+        if let DocumentContent::RestructuredText(rst) = &doc.content {
+            let titles: Vec<_> = rst.ast.iter().filter_map(|n| {
+                if let RstNode::Title { text, level, .. } = n {
+                    Some((text.clone(), *level))
+                } else {
+                    None
+                }
+            }).collect();
+
+            assert_eq!(titles.len(), 3);
+            assert_eq!(titles[0], ("First".to_string(), 1));  // = is level 1
+            assert_eq!(titles[1], ("Second".to_string(), 2)); // - is level 2
+            assert_eq!(titles[2], ("Third".to_string(), 1));  // = again, still level 1
+        } else {
+            panic!("Expected RST content");
+        }
     }
 
     #[test]

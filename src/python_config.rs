@@ -222,11 +222,39 @@ impl PythonConfigParser {
         Ok(())
     }
 
+    /// Strip Python string prefixes like u, r, b, f (e.g., u'text' -> 'text')
+    fn strip_string_prefix(s: &str) -> &str {
+        // Handle prefixes: u, r, b, f, and combinations like br, rb, fr, rf
+        let s_lower = s.to_lowercase();
+        if (s_lower.starts_with("u'") || s_lower.starts_with("u\""))
+            || (s_lower.starts_with("r'") || s_lower.starts_with("r\""))
+            || (s_lower.starts_with("b'") || s_lower.starts_with("b\""))
+            || (s_lower.starts_with("f'") || s_lower.starts_with("f\""))
+        {
+            &s[1..]
+        } else if s_lower.starts_with("br'")
+            || s_lower.starts_with("br\"")
+            || s_lower.starts_with("rb'")
+            || s_lower.starts_with("rb\"")
+            || s_lower.starts_with("fr'")
+            || s_lower.starts_with("fr\"")
+            || s_lower.starts_with("rf'")
+            || s_lower.starts_with("rf\"")
+        {
+            &s[2..]
+        } else {
+            s
+        }
+    }
+
     /// Parse simple Python assignments
     fn parse_simple_assignment(&self, line: &str) -> Option<(String, serde_json::Value)> {
         if let Some(eq_pos) = line.find('=') {
             let key = line[..eq_pos].trim().to_string();
             let value_str = line[eq_pos + 1..].trim();
+
+            // Strip Python string prefixes (u, r, b, f, etc.)
+            let value_str = Self::strip_string_prefix(value_str);
 
             // Parse common value types
             if value_str.starts_with('"') && value_str.ends_with('"') {

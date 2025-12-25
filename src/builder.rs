@@ -637,22 +637,30 @@ impl SphinxBuilder {
         let mut css_files: Vec<String> = Vec::new();
         if let Some(ref theme) = self.active_theme {
             for stylesheet in &theme.stylesheets {
-                css_files.push(format!("_static/{}", stylesheet.path));
+                if !stylesheet.path.is_empty() {
+                    css_files.push(format!("_static/{}", stylesheet.path));
+                }
             }
         }
         for css_file in &self.config.html_css_files {
-            css_files.push(format!("_static/{}", css_file));
+            if !css_file.is_empty() {
+                css_files.push(format!("_static/{}", css_file));
+            }
         }
 
         // Build JS file list
         let mut script_files: Vec<String> = Vec::new();
         if let Some(ref theme) = self.active_theme {
             for script in &theme.scripts {
-                script_files.push(format!("_static/{}", script.path));
+                if !script.path.is_empty() {
+                    script_files.push(format!("_static/{}", script.path));
+                }
             }
         }
         for js_file in &self.config.html_js_files {
-            script_files.push(format!("_static/{}", js_file));
+            if !js_file.is_empty() {
+                script_files.push(format!("_static/{}", js_file));
+            }
         }
 
         // Get page title
@@ -682,7 +690,14 @@ impl SphinxBuilder {
         // Core content
         ctx.insert("body", body_html).ok();
         ctx.insert("title", &title).ok();
-        ctx.insert("docstitle", &self.config.project).ok();
+
+        // Build docstitle in Sphinx format: "{project} {version} documentation"
+        let docstitle = if let Some(ref version) = self.config.version {
+            format!("{} {} documentation", self.config.project, version)
+        } else {
+            format!("{} documentation", self.config.project)
+        };
+        ctx.insert("docstitle", &docstitle).ok();
         ctx.insert("project", &self.config.project).ok();
         ctx.insert("version", &self.config.version).ok();
 
