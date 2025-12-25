@@ -175,7 +175,24 @@ impl HtmlRenderer {
             } => {
                 let items_html: String = items
                     .iter()
-                    .map(|item| format!("<li>{}</li>", self.render_rst_inline(item)))
+                    .map(|item| {
+                        // Check if item has nested content (contains newlines)
+                        if item.contains('\n') {
+                            let parts: Vec<&str> = item.split('\n').collect();
+                            let term = self.render_rst_inline(parts[0]);
+                            let nested_items: String = parts[1..]
+                                .iter()
+                                .map(|nested| format!("<li><p>{}</p></li>", self.render_rst_inline(nested)))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            format!(
+                                "<li><dl class=\"simple\">\n<dt>{}</dt><dd><ul>\n{}\n</ul>\n</dd>\n</dl></li>",
+                                term, nested_items
+                            )
+                        } else {
+                            format!("<li>{}</li>", self.render_rst_inline(item))
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 // Use class="simple" for unordered lists like Sphinx does
@@ -458,18 +475,34 @@ impl HtmlRenderer {
         // Now HTML escape the result (placeholders will be preserved since they don't contain special chars)
         let mut result = html_escape::encode_text(&result_with_placeholders).to_string();
 
-        // Process inline code: ``code``
+        // Process inline code with placeholders to protect content from bold/italic processing
+        // Double backticks: ``code``
         let code_re = Regex::new(r"``([^`]+)``").unwrap();
         result = code_re
-            .replace_all(&result, "<code>$1</code>")
+            .replace_all(&result, |caps: &regex::Captures| {
+                let code_content = &caps[1];
+                let html = format!("<code>{}</code>", code_content);
+                let placeholder = format!("\x00ROLE{}\x00", role_replacements.len());
+                role_replacements.push(html);
+                placeholder
+            })
             .to_string();
 
-        // Process single backtick inline code: `code` -> <code class="code docutils literal notranslate"><span class="pre">code</span></code>
+        // Single backtick inline code: `code`
         // References (`text`_) were already processed and replaced with placeholders,
         // so we can safely match remaining single backticks
         let single_code_re = Regex::new(r"`([^`]+)`").unwrap();
         result = single_code_re
-            .replace_all(&result, "<code class=\"code docutils literal notranslate\"><span class=\"pre\">$1</span></code>")
+            .replace_all(&result, |caps: &regex::Captures| {
+                let code_content = &caps[1];
+                let html = format!(
+                    "<code class=\"code docutils literal notranslate\"><span class=\"pre\">{}</span></code>",
+                    code_content
+                );
+                let placeholder = format!("\x00ROLE{}\x00", role_replacements.len());
+                role_replacements.push(html);
+                placeholder
+            })
             .to_string();
 
         // Process bold: **text** (must be done before italic)
@@ -482,7 +515,7 @@ impl HtmlRenderer {
         let italic_re = Regex::new(r"\*([^*]+)\*").unwrap();
         result = italic_re.replace_all(&result, "<em>$1</em>").to_string();
 
-        // Restore role HTML from placeholders
+        // Restore all HTML from placeholders (roles and code)
         for (i, html) in role_replacements.iter().enumerate() {
             let placeholder = format!("\x00ROLE{}\x00", i);
             result = result.replace(&placeholder, html);

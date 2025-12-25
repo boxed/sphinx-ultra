@@ -476,8 +476,14 @@ impl Parser {
                 consumed_lines += 1;
             } else if line_indent > initial_indent && !trimmed.is_empty() {
                 // Continuation of current item (indented content)
-                current_item.push(' ');
-                current_item.push_str(trimmed);
+                // If it's a nested bullet, strip the marker
+                let content = if trimmed.starts_with("* ") || trimmed.starts_with("- ") {
+                    &trimmed[2..]
+                } else {
+                    trimmed
+                };
+                current_item.push_str("\n");
+                current_item.push_str(content);
                 consumed_lines += 1;
             } else if trimmed.is_empty() {
                 // Empty line might end the list or be between items
