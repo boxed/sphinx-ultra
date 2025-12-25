@@ -209,6 +209,18 @@ impl Parser {
                 continue;
             }
 
+            // Check for bullet list (lines starting with "* " or "- ")
+            if trimmed.starts_with("* ") || trimmed.starts_with("- ") {
+                let (items, consumed_lines) = self.parse_bullet_list(&lines[i..]);
+                nodes.push(RstNode::List {
+                    items,
+                    ordered: false,
+                    line: i + 1,
+                });
+                i += consumed_lines;
+                continue;
+            }
+
             // Check for definition list (term followed by indented definition)
             // Pattern: non-indented line followed by indented line(s)
             let (paragraph_content, para_consumed) = self.parse_paragraph(&lines[i..]);
@@ -437,6 +449,61 @@ impl Parser {
         }
 
         (content.trim().to_string(), consumed_lines)
+    }
+
+    /// Parse a bullet list (lines starting with "* " or "- ")
+    fn parse_bullet_list(&self, lines: &[&str]) -> (Vec<String>, usize) {
+        let mut items = Vec::new();
+        let mut consumed_lines = 0;
+        let mut current_item = String::new();
+
+        // Determine the initial indentation level
+        let first_line = lines[0];
+        let initial_indent = first_line.len() - first_line.trim_start().len();
+
+        for line in lines {
+            let line_indent = line.len() - line.trim_start().len();
+            let trimmed = line.trim();
+
+            // Check if this is a new list item at the same level
+            if line_indent == initial_indent && (trimmed.starts_with("* ") || trimmed.starts_with("- ")) {
+                // Save previous item if any
+                if !current_item.is_empty() {
+                    items.push(current_item.trim().to_string());
+                }
+                // Start new item (remove the bullet marker)
+                current_item = trimmed[2..].to_string();
+                consumed_lines += 1;
+            } else if line_indent > initial_indent && !trimmed.is_empty() {
+                // Continuation of current item (indented content)
+                current_item.push(' ');
+                current_item.push_str(trimmed);
+                consumed_lines += 1;
+            } else if trimmed.is_empty() {
+                // Empty line might end the list or be between items
+                consumed_lines += 1;
+                // Check if next line continues the list
+                if consumed_lines < lines.len() {
+                    let next_line = lines[consumed_lines];
+                    let next_trimmed = next_line.trim();
+                    let next_indent = next_line.len() - next_line.trim_start().len();
+                    if next_indent == initial_indent && (next_trimmed.starts_with("* ") || next_trimmed.starts_with("- ")) {
+                        continue;
+                    }
+                }
+                break;
+            } else {
+                // Non-indented, non-bullet line ends the list
+                break;
+            }
+        }
+
+        // Don't forget the last item
+        if !current_item.is_empty() {
+            items.push(current_item.trim().to_string());
+        }
+
+        (items, consumed_lines)
     }
 
     /// Parse an internal hyperlink target like `.. _link-name:`

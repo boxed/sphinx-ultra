@@ -326,7 +326,7 @@ impl DirectiveProcessor for CodeBlockDirective {
         // Use syntect for syntax highlighting
         let highlighted = self.highlight_code(&content, language);
         html.push_str(&format!(
-            "<div class=\"highlight-{}\">{}</div>",
+            "<div class=\"highlight-{} notranslate\">{}</div>",
             language,
             highlighted
         ));
@@ -405,7 +405,7 @@ impl DirectiveProcessor for LiteralIncludeDirective {
         // For now, return a placeholder. In a full implementation,
         // you would read the file and include its contents
         Ok(format!(
-            "<div class=\"literal-include\"><div class=\"highlight-{}\"><pre><code class=\"language-{}\"><!-- Content of {} would be included here --></code></pre></div></div>",
+            "<div class=\"literal-include\"><div class=\"highlight-{} notranslate\"><pre><code class=\"language-{}\"><!-- Content of {} would be included here --></code></pre></div></div>",
             language, language, filename
         ))
     }

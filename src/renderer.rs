@@ -100,12 +100,40 @@ impl HtmlRenderer {
     }
 
     /// Render RST content to HTML.
+    /// Wraps content in hierarchical section tags based on heading levels.
     pub fn render_rst(&self, content: &RstContent) -> String {
         let mut html = String::new();
+        let mut open_sections: Vec<usize> = Vec::new(); // Stack of open section levels
 
         for node in &content.ast {
+            // Check if this is a title and handle section nesting
+            if let RstNode::Title { level, text, .. } = node {
+                let level = (*level).min(6).max(1);
+
+                // Close sections that are at the same level or deeper
+                while let Some(&open_level) = open_sections.last() {
+                    if open_level >= level {
+                        html.push_str("</section>\n");
+                        open_sections.pop();
+                    } else {
+                        break;
+                    }
+                }
+
+                // Open a new section for this heading
+                let plain_text = extract_plain_text_for_slug(text);
+                let slug = slugify(&plain_text);
+                html.push_str(&format!("<section id=\"{}\">\n", slug));
+                open_sections.push(level);
+            }
+
             html.push_str(&self.render_rst_node(node));
             html.push('\n');
+        }
+
+        // Close any remaining open sections
+        for _ in open_sections {
+            html.push_str("</section>\n");
         }
 
         html
@@ -122,8 +150,9 @@ impl HtmlRenderer {
                 // Process inline markup in titles (including roles)
                 let rendered_text = self.render_rst_inline(text);
                 // Add headerlink (¶ symbol) like Sphinx does
+                // Note: id is on the parent <section> tag, not the heading
                 format!(
-                    "<h{level} id=\"{slug}\">{text}<a class=\"headerlink\" href=\"#{slug}\" title=\"Link to this heading\">¶</a></h{level}>",
+                    "<h{level}>{text}<a class=\"headerlink\" href=\"#{slug}\" title=\"Link to this heading\">¶</a></h{level}>",
                     level = level,
                     slug = slug,
                     text = rendered_text
@@ -144,13 +173,17 @@ impl HtmlRenderer {
                 ordered,
                 ..
             } => {
-                let tag = if *ordered { "ol" } else { "ul" };
                 let items_html: String = items
                     .iter()
                     .map(|item| format!("<li>{}</li>", self.render_rst_inline(item)))
                     .collect::<Vec<_>>()
                     .join("\n");
-                format!("<{}>\n{}\n</{}>", tag, items_html, tag)
+                // Use class="simple" for unordered lists like Sphinx does
+                if *ordered {
+                    format!("<ol>\n{}\n</ol>", items_html)
+                } else {
+                    format!("<ul class=\"simple\">\n{}\n</ul>", items_html)
+                }
             }
 
             RstNode::Table { headers, rows, .. } => {
@@ -375,7 +408,7 @@ impl HtmlRenderer {
                         let display_text = ref_text[..angle_pos].trim();
                         let url = &ref_text[angle_pos + 1..ref_text.len() - 1];
                         format!(
-                            "<a href=\"{}\">{}</a>",
+                            "<a class=\"reference external\" href=\"{}\">{}</a>",
                             html_escape::encode_text(url),
                             html_escape::encode_text(display_text)
                         )
@@ -383,7 +416,7 @@ impl HtmlRenderer {
                         // Malformed, treat as internal reference
                         let anchor = slugify(ref_text);
                         format!(
-                            "<a href=\"#{}\">{}</a>",
+                            "<a class=\"reference internal\" href=\"#{}\">{}</a>",
                             anchor,
                             html_escape::encode_text(ref_text)
                         )
@@ -392,12 +425,30 @@ impl HtmlRenderer {
                     // Internal reference
                     let anchor = slugify(ref_text);
                     format!(
-                        "<a href=\"#{}\">{}</a>",
+                        "<a class=\"reference internal\" href=\"#{}\">{}</a>",
                         anchor,
                         html_escape::encode_text(ref_text)
                     )
                 };
 
+                let placeholder = format!("\x00ROLE{}\x00", role_replacements.len());
+                role_replacements.push(html);
+                placeholder
+            })
+            .to_string();
+
+        // Process bare word references: Word_ (without backticks)
+        // These are internal references to link targets
+        let bare_ref_re = Regex::new(r"\b([A-Za-z][A-Za-z0-9_.]*[A-Za-z0-9])_\b").unwrap();
+        let result_with_placeholders = bare_ref_re
+            .replace_all(&result_with_placeholders, |caps: &regex::Captures| {
+                let ref_text = &caps[1];
+                let anchor = slugify(ref_text);
+                let html = format!(
+                    "<a class=\"reference internal\" href=\"#{}\">{}</a>",
+                    anchor,
+                    html_escape::encode_text(ref_text)
+                );
                 let placeholder = format!("\x00ROLE{}\x00", role_replacements.len());
                 role_replacements.push(html);
                 placeholder
@@ -653,7 +704,8 @@ mod tests {
             line: 1,
         };
         let html = renderer.render_rst_node(&node);
-        assert_eq!(html, "<h1 id=\"introduction\">Introduction<a class=\"headerlink\" href=\"#introduction\" title=\"Link to this heading\">¶</a></h1>");
+        // Note: id is now on the parent <section> tag, not the heading itself
+        assert_eq!(html, "<h1>Introduction<a class=\"headerlink\" href=\"#introduction\" title=\"Link to this heading\">¶</a></h1>");
     }
 
     #[test]
@@ -736,7 +788,7 @@ mod tests {
             line: 1,
         };
         let html = renderer.render_rst_node(&node);
-        assert!(html.starts_with("<ul>"));
+        assert!(html.starts_with("<ul class=\"simple\">"));
         assert!(html.contains("<li>Item 1</li>"));
         assert!(html.contains("<li>Item 2</li>"));
         assert!(html.ends_with("</ul>"));
@@ -782,8 +834,8 @@ mod tests {
             "See the `howto <https://docs.iommi.rocks/cookbook.html>`_ for examples."
         );
         assert!(
-            result.contains("<a href=\"https://docs.iommi.rocks/cookbook.html\">howto</a>"),
-            "external link should render correctly, got: {}",
+            result.contains("<a class=\"reference external\" href=\"https://docs.iommi.rocks/cookbook.html\">howto</a>"),
+            "external link should render correctly with class, got: {}",
             result
         );
         assert!(
@@ -806,6 +858,11 @@ mod tests {
             result
         );
         assert!(
+            result.contains("class=\"reference external\""),
+            "external link should have reference external class, got: {}",
+            result
+        );
+        assert!(
             result.contains(">howto</a>"),
             "display text should be 'howto', got: {}",
             result
@@ -819,8 +876,8 @@ mod tests {
         // Internal reference (no URL)
         let result = renderer.render_rst_inline("See `my-section`_ for details.");
         assert!(
-            result.contains("<a href=\"#my-section\">my-section</a>"),
-            "internal reference should create anchor link, got: {}",
+            result.contains("<a class=\"reference internal\" href=\"#my-section\">my-section</a>"),
+            "internal reference should create anchor link with class, got: {}",
             result
         );
     }
@@ -855,8 +912,10 @@ Now I can display a list of Bar in a table."#;
         let renderer = HtmlRenderer::new();
         let html = renderer.render_document_content(&doc.content);
 
-        // Should have proper heading (= is first underline char, so level 1)
-        assert!(html.contains("<h1 id=\"test-document\">Test Document<a class=\"headerlink\" href=\"#test-document\" title=\"Link to this heading\">¶</a></h1>"));
+        // Should have proper section and heading (= is first underline char, so level 1)
+        // The id is now on the section, not the heading
+        assert!(html.contains("<section id=\"test-document\">"));
+        assert!(html.contains("<h1>Test Document<a class=\"headerlink\" href=\"#test-document\" title=\"Link to this heading\">¶</a></h1>"));
 
         // Should have code block with pre tag (syntect generates <pre style=...>)
         assert!(html.contains("<pre"), "should have pre tag");
