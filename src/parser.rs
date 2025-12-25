@@ -206,6 +206,49 @@ impl Parser {
                 continue;
             }
 
+            // Check for overlined title (=======\nTitle\n=======)
+            // The overline must be all the same character, followed by title text, followed by matching underline
+            if i + 2 < lines.len()
+                && !trimmed.is_empty()
+                && trimmed.chars().all(|c| "=-~^\"'*+#<>".contains(c))
+                && trimmed.chars().next() == trimmed.chars().last()  // all same char
+            {
+                let overline_char = trimmed.chars().next().unwrap();
+                let title_line = lines[i + 1].trim();
+                let underline = lines[i + 2].trim();
+                let title_char_count = title_line.chars().count();
+                let overline_char_count = trimmed.chars().count();
+                let underline_char_count = underline.chars().count();
+
+                // Check if this is a valid overlined title:
+                // - Title line is not empty
+                // - Underline matches overline character
+                // - Both overline and underline are at least as long as the title
+                if !title_line.is_empty()
+                    && !underline.is_empty()
+                    && underline.chars().all(|c| c == overline_char)
+                    && overline_char_count >= title_char_count
+                    && underline_char_count >= title_char_count
+                {
+                    // Determine level based on order of first appearance
+                    let level = if let Some(pos) = seen_underline_chars.iter().position(|&c| c == overline_char) {
+                        pos + 1
+                    } else {
+                        seen_underline_chars.push(overline_char);
+                        seen_underline_chars.len()
+                    };
+
+                    nodes.push(RstNode::Title {
+                        text: title_line.to_string(),
+                        level,
+                        line: i + 2, // Line number of the title text
+                    });
+
+                    i += 3; // Skip overline, title, and underline
+                    continue;
+                }
+            }
+
             // Check for title (underlined with =, -, ~, etc.)
             if i + 1 < lines.len() {
                 let next_line = lines[i + 1];
@@ -964,6 +1007,64 @@ Type: :doc:`Attrs`
                 matches!(node, RstNode::Title { .. })
             }).count();
             assert_eq!(title_count, 1, "Should have exactly one title, got {}", title_count);
+        } else {
+            panic!("Expected RST content");
+        }
+    }
+
+    #[test]
+    fn test_title_with_overline_and_underline() {
+        let parser = create_parser();
+        // Title with both overline and underline (common RST style)
+        let content = "=======\nCredits\n=======\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "Credits");
+    }
+
+    #[test]
+    fn test_title_with_overline_different_chars() {
+        let parser = create_parser();
+        // Test with different underline characters
+        // Note: overline/underline must be at least as long as the title
+        let content = "#########\nChapter 1\n#########\n\nIntroduction.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "Chapter 1");
+    }
+
+    #[test]
+    fn test_mixed_overlined_and_underlined_titles() {
+        let parser = create_parser();
+        // Mix of overlined and underlined titles - they should get correct levels
+        let content = r#"=======
+Credits
+=======
+
+Some text.
+
+Authors
+-------
+
+List of authors.
+"#;
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "Credits");
+
+        // Check that both titles are parsed with correct levels
+        if let crate::document::DocumentContent::RestructuredText(rst) = &doc.content {
+            let titles: Vec<_> = rst.ast.iter().filter_map(|node| {
+                if let RstNode::Title { text, level, .. } = node {
+                    Some((text.clone(), *level))
+                } else {
+                    None
+                }
+            }).collect();
+
+            assert_eq!(titles.len(), 2, "Should have 2 titles, got {:?}", titles);
+            assert_eq!(titles[0], ("Credits".to_string(), 1)); // = is first, so level 1
+            assert_eq!(titles[1], ("Authors".to_string(), 2)); // - is second, so level 2
         } else {
             panic!("Expected RST content");
         }
