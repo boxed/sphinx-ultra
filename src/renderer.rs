@@ -1,7 +1,9 @@
 //! AST-to-HTML renderer for RST and Markdown documents.
 
+use crate::config::BuildConfig;
 use crate::directives::{Directive, DirectiveRegistry};
 use crate::document::{DocumentContent, MarkdownContent, MarkdownNode, RstContent, RstNode};
+use crate::parser::Parser;
 use crate::roles::{Role, RoleRegistry};
 use regex::Regex;
 use std::collections::HashMap;
@@ -265,6 +267,12 @@ impl HtmlRenderer {
                     return self.render_literalinclude(filename, options);
                 }
 
+                // Handle include specially since it needs to parse and render RST content
+                if name == "include" {
+                    let filename = args.first().map(|s| s.as_str()).unwrap_or("");
+                    return self.render_include(filename, options);
+                }
+
                 // Pre-process content for inline RST markup (roles like :ref:, :doc:, etc.)
                 // This is needed for admonitions and other directives that contain RST text
                 // Skip processing for directives that should receive raw content (like raw, code-block, literalinclude)
@@ -447,11 +455,11 @@ impl HtmlRenderer {
             }
         }
 
-        // Handle start-line option (1-based indexing)
+        // Handle start-line option (0-based: skip first N lines, like Sphinx)
         if let Some(start_line) = options.get("start-line") {
             if let Ok(start) = start_line.parse::<usize>() {
-                if start > 0 && start <= lines.len() {
-                    lines = lines[start - 1..].to_vec();
+                if start <= lines.len() {
+                    lines = lines[start..].to_vec();
                 }
             }
         }
@@ -568,6 +576,92 @@ impl HtmlRenderer {
         ));
 
         html
+    }
+
+    /// Render an include directive by reading a file, optionally filtering lines,
+    /// parsing as RST, and rendering to HTML.
+    fn render_include(&self, filename: &str, options: &HashMap<String, String>) -> String {
+        // Resolve the file path relative to source_dir
+        let file_path = if let Some(ref source_dir) = self.source_dir {
+            source_dir.join(filename)
+        } else {
+            PathBuf::from(filename)
+        };
+
+        // Read the file content
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(content) => content,
+            Err(e) => {
+                return format!(
+                    "<!-- include error: could not read '{}': {} -->",
+                    filename, e
+                );
+            }
+        };
+
+        // Apply line-based filtering
+        let mut lines: Vec<&str> = content.lines().collect();
+
+        // Handle start-line option (0-based: skip first N lines, like Sphinx)
+        if let Some(start_line) = options.get("start-line") {
+            if let Ok(start) = start_line.parse::<usize>() {
+                if start <= lines.len() {
+                    lines = lines[start..].to_vec();
+                }
+            }
+        }
+
+        // Handle end-line option (1-based indexing, exclusive like Sphinx)
+        if let Some(end_line) = options.get("end-line") {
+            if let Ok(end) = end_line.parse::<usize>() {
+                if end > 0 && end <= lines.len() {
+                    lines = lines[..end].to_vec();
+                }
+            }
+        }
+
+        // Handle start-after option (find line containing this text and start after it)
+        if let Some(start_after) = options.get("start-after") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(start_after.as_str())) {
+                lines = lines[pos + 1..].to_vec();
+            }
+        }
+
+        // Handle end-before option (find line containing this text and end before it)
+        if let Some(end_before) = options.get("end-before") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(end_before.as_str())) {
+                lines = lines[..pos].to_vec();
+            }
+        }
+
+        let filtered_content = lines.join("\n");
+
+        // Parse the content as RST
+        let config = BuildConfig::default();
+        let parser = match Parser::new(&config) {
+            Ok(p) => p,
+            Err(e) => {
+                return format!(
+                    "<!-- include error: could not create parser: {} -->",
+                    e
+                );
+            }
+        };
+
+        // Parse the included content - use a dummy path with .rst extension for RST parsing
+        let dummy_path = file_path.with_extension("rst");
+        let document = match parser.parse(&dummy_path, &filtered_content) {
+            Ok(doc) => doc,
+            Err(e) => {
+                return format!(
+                    "<!-- include error: could not parse '{}': {} -->",
+                    filename, e
+                );
+            }
+        };
+
+        // Render the parsed content
+        self.render_document_content(&document.content)
     }
 
     /// Parse a lines specification like "1-10", "1,3,5-7", "1-10,15,20-25"
@@ -2483,5 +2577,190 @@ def other_function():
         // Should NOT contain imports or other functions
         assert!(!html.contains("import os"), "should NOT contain 'import os', got: {}", html);
         assert!(!html.contains("other_function"), "should NOT contain 'other_function', got: {}", html);
+    }
+
+    #[test]
+    fn test_include_basic() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with an RST file to include
+        let temp_dir = TempDir::new().unwrap();
+        let include_file = temp_dir.path().join("included.rst");
+        std::fs::write(&include_file, "This is **included** content.\n\nAnother paragraph.\n").unwrap();
+
+        // Create an RST file that includes the other file
+        let rst_content = r#"Title
+=====
+
+.. include:: included.rst
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let mut parser = Parser::new(&config).unwrap();
+        parser.set_source_dir(temp_dir.path().to_path_buf());
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should include the content from the included file, rendered as RST
+        assert!(
+            html.contains("included"),
+            "should contain 'included', got: {}",
+            html
+        );
+        assert!(
+            html.contains("<strong>included</strong>") || html.contains("<b>included</b>"),
+            "should have bold 'included' text, got: {}",
+            html
+        );
+        assert!(
+            html.contains("Another paragraph"),
+            "should contain 'Another paragraph', got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_include_with_start_line() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with an RST file to include
+        // start-line: N means skip the first N lines (0-based, like Sphinx)
+        // So with start-line: 2 on "foo\nbar\nbaz", we get only "baz"
+        let temp_dir = TempDir::new().unwrap();
+        let include_file = temp_dir.path().join("included.rst");
+        std::fs::write(&include_file, "foo\nbar\nbaz\n").unwrap();
+
+        // Create an RST file that includes with start-line: 2
+        let rst_content = r#"Title
+=====
+
+.. include:: included.rst
+   :start-line: 2
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let mut parser = Parser::new(&config).unwrap();
+        parser.set_source_dir(temp_dir.path().to_path_buf());
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // With start-line: 2, we skip the first 2 lines (foo, bar) and get only baz
+        assert!(
+            html.contains("baz"),
+            "should contain 'baz', got: {}",
+            html
+        );
+        assert!(
+            !html.contains("foo"),
+            "should NOT contain 'foo', got: {}",
+            html
+        );
+        assert!(
+            !html.contains("bar"),
+            "should NOT contain 'bar', got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_include_file_not_found() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create an RST file that tries to include a non-existent file
+        let rst_content = r#"Title
+=====
+
+.. include:: nonexistent.rst
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let mut parser = Parser::new(&config).unwrap();
+        parser.set_source_dir(temp_dir.path().to_path_buf());
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // When include file is not found during parsing, it's silently ignored
+        // The document should still render, just without the included content
+        assert!(
+            html.contains("Title"),
+            "should still contain the title, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_include_header_levels_shared() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Test that header levels are correctly shared between main doc and included content
+        let temp_dir = TempDir::new().unwrap();
+
+        // The included file has a header with = underline
+        let include_file = temp_dir.path().join("included.rst");
+        std::fs::write(&include_file, "Included Section\n================\n\nIncluded content.\n").unwrap();
+
+        // Main doc has = for level 1, - for level 2
+        // The included file's = header should become level 1 (same as main doc's =)
+        let rst_content = r#"Main Title
+==========
+
+Some content.
+
+Sub Section
+-----------
+
+More content.
+
+.. include:: included.rst
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let mut parser = Parser::new(&config).unwrap();
+        parser.set_source_dir(temp_dir.path().to_path_buf());
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // The included section should be h1 (level 1) since it uses = which is already level 1
+        assert!(
+            html.contains("<h1>Included Section"),
+            "included section should be h1, got: {}",
+            html
+        );
+        // Sub Section should be h2 (level 2)
+        assert!(
+            html.contains("<h2>Sub Section"),
+            "sub section should be h2, got: {}",
+            html
+        );
     }
 }

@@ -3,7 +3,7 @@ use log::debug;
 use pulldown_cmark::{Event, Parser as MarkdownParser, Tag};
 use regex::Regex;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::config::BuildConfig;
 use crate::directives::DirectiveRegistry;
@@ -71,6 +71,8 @@ pub struct Parser {
     directive_registry: DirectiveRegistry,
     // #[allow(dead_code)]
     // role_registry: RoleRegistry, // TODO: Implement roles module
+    /// Source directory for resolving relative paths in include directives
+    source_dir: Option<PathBuf>,
 }
 
 impl Parser {
@@ -86,7 +88,13 @@ impl Parser {
             cross_ref_regex,
             directive_registry,
             // role_registry, // TODO: Implement roles module
+            source_dir: None,
         })
+    }
+
+    /// Set the source directory for resolving relative paths in include directives
+    pub fn set_source_dir(&mut self, source_dir: PathBuf) {
+        self.source_dir = Some(source_dir);
     }
 
     pub fn parse(&self, file_path: &Path, content: &str) -> Result<Document> {
@@ -141,6 +149,23 @@ impl Parser {
         // The first underline character encountered becomes level 1, second becomes level 2, etc.
         let mut seen_underline_chars: Vec<char> = Vec::new();
 
+        self.parse_rst_lines(&lines, &mut nodes, &mut directives, &mut seen_underline_chars)?;
+
+        Ok(DocumentContent::RestructuredText(RstContent {
+            raw: content.to_string(),
+            ast: nodes,
+            directives,
+        }))
+    }
+
+    /// Parse RST lines with shared state for header levels (used for include expansion)
+    fn parse_rst_lines(
+        &self,
+        lines: &[&str],
+        nodes: &mut Vec<RstNode>,
+        directives: &mut Vec<RstDirective>,
+        seen_underline_chars: &mut Vec<char>,
+    ) -> Result<()> {
         let mut i = 0;
         while i < lines.len() {
             let line = lines[i];
@@ -158,6 +183,15 @@ impl Parser {
 
                 let (directive, consumed_lines) =
                     self.parse_rst_directive(&lines[i..], directive_name, directive_args, i + 1)?;
+
+                // Handle include directive specially - expand it inline
+                if directive_name == "include" {
+                    if let Some(included_nodes) = self.expand_include_directive(&directive, seen_underline_chars) {
+                        nodes.extend(included_nodes);
+                    }
+                    i += consumed_lines;
+                    continue;
+                }
 
                 directives.push(directive.clone());
                 nodes.push(RstNode::Directive {
@@ -302,11 +336,76 @@ impl Parser {
             i += para_consumed;
         }
 
-        Ok(DocumentContent::RestructuredText(RstContent {
-            raw: content.to_string(),
-            ast: nodes,
-            directives,
-        }))
+        Ok(())
+    }
+
+    /// Expand an include directive by reading the file and parsing its content.
+    /// Returns the parsed nodes, or None if the file cannot be read.
+    fn expand_include_directive(
+        &self,
+        directive: &RstDirective,
+        seen_underline_chars: &mut Vec<char>,
+    ) -> Option<Vec<RstNode>> {
+        let filename = directive.args.first()?;
+
+        // Resolve the file path relative to source_dir
+        let file_path = if let Some(ref source_dir) = self.source_dir {
+            source_dir.join(filename)
+        } else {
+            PathBuf::from(filename)
+        };
+
+        // Read the file content
+        let content = match std::fs::read_to_string(&file_path) {
+            Ok(content) => content,
+            Err(_) => return None,
+        };
+
+        // Apply line-based filtering
+        let mut lines: Vec<&str> = content.lines().collect();
+
+        // Handle start-line option (0-based: skip first N lines, like Sphinx)
+        if let Some(start_line) = directive.options.get("start-line") {
+            if let Ok(start) = start_line.parse::<usize>() {
+                if start <= lines.len() {
+                    lines = lines[start..].to_vec();
+                }
+            }
+        }
+
+        // Handle end-line option (0-based, exclusive like Sphinx)
+        if let Some(end_line) = directive.options.get("end-line") {
+            if let Ok(end) = end_line.parse::<usize>() {
+                if end <= lines.len() {
+                    lines = lines[..end].to_vec();
+                }
+            }
+        }
+
+        // Handle start-after option
+        if let Some(start_after) = directive.options.get("start-after") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(start_after.as_str())) {
+                lines = lines[pos + 1..].to_vec();
+            }
+        }
+
+        // Handle end-before option
+        if let Some(end_before) = directive.options.get("end-before") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(end_before.as_str())) {
+                lines = lines[..pos].to_vec();
+            }
+        }
+
+        // Parse the included content with the shared seen_underline_chars
+        let mut included_nodes = Vec::new();
+        let mut included_directives = Vec::new();
+        let lines_refs: Vec<&str> = lines.iter().map(|s| *s).collect();
+
+        if self.parse_rst_lines(&lines_refs, &mut included_nodes, &mut included_directives, seen_underline_chars).is_ok() {
+            Some(included_nodes)
+        } else {
+            None
+        }
     }
 
     fn parse_markdown(&self, content: &str) -> Result<DocumentContent> {

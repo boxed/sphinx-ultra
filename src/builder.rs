@@ -64,7 +64,8 @@ impl SphinxBuilder {
         let cache_dir = output_dir.join(".sphinx-ultra-cache");
         let cache = BuildCache::new(cache_dir)?;
 
-        let parser = Parser::new(&config)?;
+        let mut parser = Parser::new(&config)?;
+        parser.set_source_dir(source_dir.clone());
 
         let parallel_jobs = config.parallel_jobs.unwrap_or_else(|| {
             std::thread::available_parallelism()

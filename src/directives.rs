@@ -590,8 +590,41 @@ stub_directive!(FigureDirective, "figure");
 stub_directive!(TableDirective, "table");
 stub_directive!(CsvTableDirective, "csv-table");
 stub_directive!(ListTableDirective, "list-table");
-stub_directive!(IncludeDirective, "include");
 stub_directive!(MathDirective, "math");
+
+// Include Directive - includes RST content from another file
+struct IncludeDirective;
+
+impl DirectiveProcessor for IncludeDirective {
+    fn process(&self, directive: &Directive) -> Result<String> {
+        // The actual processing is done in the renderer, but we return a placeholder here
+        // in case it's called through the registry (shouldn't happen with current code flow)
+        Ok(format!(
+            "<!-- include directive: {} -->",
+            directive.arguments.join(" ")
+        ))
+    }
+
+    fn get_name(&self) -> &str {
+        "include"
+    }
+
+    fn get_option_spec(&self) -> HashMap<String, DirectiveOptionType> {
+        let mut options = HashMap::new();
+        options.insert("start-line".to_string(), DirectiveOptionType::Integer);
+        options.insert("end-line".to_string(), DirectiveOptionType::Integer);
+        options.insert("start-after".to_string(), DirectiveOptionType::String);
+        options.insert("end-before".to_string(), DirectiveOptionType::String);
+        options.insert("literal".to_string(), DirectiveOptionType::Flag);
+        options.insert("code".to_string(), DirectiveOptionType::String);
+        options.insert("number-lines".to_string(), DirectiveOptionType::Integer);
+        options.insert("encoding".to_string(), DirectiveOptionType::Encoding);
+        options.insert("tab-width".to_string(), DirectiveOptionType::Integer);
+        options.insert("class".to_string(), DirectiveOptionType::ClassOption);
+        options.insert("name".to_string(), DirectiveOptionType::String);
+        options
+    }
+}
 
 // Raw Directive - inserts raw content in a specific format (html, latex, etc.)
 struct RawDirective;
