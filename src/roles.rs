@@ -123,8 +123,9 @@ impl RoleProcessor for RefRole {
     fn process(&self, role: &Role) -> Result<String> {
         let display_text = role.text.as_ref().unwrap_or(&role.target);
         // Generate href as "target.html#target" format for cross-page references
+        // Wrap display text in <span class="std std-ref"> like Sphinx
         Ok(format!(
-            "<a class=\"reference internal\" href=\"{}.html#{}\">{}</a>",
+            "<a class=\"reference internal\" href=\"{}.html#{}\"><span class=\"std std-ref\">{}</span></a>",
             role.target, role.target, display_text
         ))
     }
@@ -139,8 +140,9 @@ struct DocRole;
 impl RoleProcessor for DocRole {
     fn process(&self, role: &Role) -> Result<String> {
         let display_text = role.text.as_ref().unwrap_or(&role.target);
+        // Wrap display text in <span class="doc"> like Sphinx
         Ok(format!(
-            "<a class=\"reference internal\" href=\"{}.html\">{}</a>",
+            "<a class=\"reference internal\" href=\"{}.html\"><span class=\"doc\">{}</span></a>",
             role.target, display_text
         ))
     }

@@ -776,12 +776,15 @@ impl SphinxBuilder {
             return String::new();
         }
 
+        let renderer = crate::renderer::HtmlRenderer::new();
         let mut html = String::from("<ul>\n");
         for entry in &document.toc {
+            // Render inline markup in the title (like `code` and :ref:)
+            let rendered_title = renderer.render_rst_inline(&entry.title);
             html.push_str(&format!(
-                "<li><a href=\"#{}\">{}</a></li>\n",
+                "<li><a class=\"reference internal\" href=\"#{}\">{}</a></li>\n",
                 html_escape::encode_text(&entry.anchor),
-                html_escape::encode_text(&entry.title)
+                rendered_title
             ));
         }
         html.push_str("</ul>\n");

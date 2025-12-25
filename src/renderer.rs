@@ -121,8 +121,9 @@ impl HtmlRenderer {
                 let level = (*level).min(6).max(1);
                 // Process inline markup in titles (including roles)
                 let rendered_text = self.render_rst_inline(text);
+                // Add headerlink (¶ symbol) like Sphinx does
                 format!(
-                    "<h{level} id=\"{slug}\">{text}</h{level}>",
+                    "<h{level} id=\"{slug}\">{text}<a class=\"headerlink\" href=\"#{slug}\" title=\"Link to this heading\">¶</a></h{level}>",
                     level = level,
                     slug = slug,
                     text = rendered_text
@@ -317,7 +318,7 @@ impl HtmlRenderer {
     }
 
     /// Render inline RST markup (bold, italic, code, roles, references).
-    fn render_rst_inline(&self, text: &str) -> String {
+    pub fn render_rst_inline(&self, text: &str) -> String {
         // Process roles FIRST on unescaped text to preserve angle brackets in "text <target>" format
         // We use a placeholder to protect the role output from subsequent escaping
         let role_re = Regex::new(r":([a-zA-Z][a-zA-Z0-9_:-]*):`([^`]+)`").unwrap();
@@ -569,7 +570,7 @@ impl HtmlRenderer {
 
 /// Extract plain text from RST markup for use in slugs.
 /// Strips inline code backticks, roles like :ref: and :doc:, etc.
-fn extract_plain_text_for_slug(text: &str) -> String {
+pub fn extract_plain_text_for_slug(text: &str) -> String {
     let mut result = text.to_string();
 
     // Remove RST roles like :ref:`text <target>` -> text
@@ -591,7 +592,7 @@ fn extract_plain_text_for_slug(text: &str) -> String {
 }
 
 /// Convert text to a URL-safe slug for anchor IDs.
-fn slugify(text: &str) -> String {
+pub fn slugify(text: &str) -> String {
     text.to_lowercase()
         .chars()
         .map(|c| {
@@ -652,7 +653,7 @@ mod tests {
             line: 1,
         };
         let html = renderer.render_rst_node(&node);
-        assert_eq!(html, "<h1 id=\"introduction\">Introduction</h1>");
+        assert_eq!(html, "<h1 id=\"introduction\">Introduction<a class=\"headerlink\" href=\"#introduction\" title=\"Link to this heading\">¶</a></h1>");
     }
 
     #[test]
@@ -855,7 +856,7 @@ Now I can display a list of Bar in a table."#;
         let html = renderer.render_document_content(&doc.content);
 
         // Should have proper heading (= is first underline char, so level 1)
-        assert!(html.contains("<h1 id=\"test-document\">Test Document</h1>"));
+        assert!(html.contains("<h1 id=\"test-document\">Test Document<a class=\"headerlink\" href=\"#test-document\" title=\"Link to this heading\">¶</a></h1>"));
 
         // Should have code block with pre tag (syntect generates <pre style=...>)
         assert!(html.contains("<pre"), "should have pre tag");
@@ -1346,10 +1347,10 @@ See :ref:`attrs <attributes>`.
         let renderer = HtmlRenderer::new();
         let html = renderer.render_document_content(&doc.content);
 
-        // The link should have text "attrs", NOT "attrs <attributes>"
+        // The link should have text "attrs" wrapped in std-ref span, NOT "attrs <attributes>"
         assert!(
-            html.contains(">attrs</a>"),
-            "link text should be 'attrs', got: {}",
+            html.contains("<span class=\"std std-ref\">attrs</span></a>"),
+            "link text should be 'attrs' in std-ref span, got: {}",
             html
         );
 
@@ -1409,10 +1410,10 @@ Type: `Union[int, str]`
             html
         );
 
-        // The link text should be "after"
+        // The link text should be "after" wrapped in std-ref span
         assert!(
-            html.contains(">after</a>"),
-            "link text should be 'after', got: {}",
+            html.contains("<span class=\"std std-ref\">after</span></a>"),
+            "link text should be 'after' in std-ref span, got: {}",
             html
         );
     }

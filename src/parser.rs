@@ -478,13 +478,17 @@ impl Parser {
     }
 
     fn extract_toc(&self, content: &DocumentContent) -> Vec<TocEntry> {
+        use crate::renderer::{extract_plain_text_for_slug, slugify};
+
         let mut toc = Vec::new();
 
         match content {
             DocumentContent::RestructuredText(rst) => {
                 for node in &rst.ast {
                     if let RstNode::Title { text, level, line } = node {
-                        let anchor = text.to_lowercase().replace(' ', "-");
+                        // Use same slug generation as renderer for consistency
+                        let plain_text = extract_plain_text_for_slug(text);
+                        let anchor = slugify(&plain_text);
                         toc.push(TocEntry::new(text.clone(), *level, anchor, *line));
                     }
                 }
@@ -492,7 +496,8 @@ impl Parser {
             DocumentContent::Markdown(md) => {
                 for node in &md.ast {
                     if let MarkdownNode::Heading { text, level, line } = node {
-                        let anchor = text.to_lowercase().replace(' ', "-");
+                        let plain_text = extract_plain_text_for_slug(text);
+                        let anchor = slugify(&plain_text);
                         toc.push(TocEntry::new(text.clone(), *level, anchor, *line));
                     }
                 }
