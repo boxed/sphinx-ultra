@@ -12,8 +12,10 @@ use crate::document::Document;
 use crate::error::{BuildErrorReport, BuildWarning};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
+use crate::navigation::{NavigationBuilder, PageNavigation, ToctreeOptions};
 use crate::parser::Parser;
 use crate::renderer::HtmlRenderer;
+use crate::template::{TemplateContext, TemplateEngine};
 use crate::theme::{Theme, ThemeRegistry};
 use crate::utils;
 
@@ -50,8 +52,11 @@ pub struct SphinxBuilder {
     #[allow(dead_code)]
     theme_registry: ThemeRegistry,
     /// The active theme
-    #[allow(dead_code)]
     active_theme: Option<Theme>,
+    /// Navigation builder for document hierarchy
+    navigation: Arc<Mutex<NavigationBuilder>>,
+    /// Template engine for rendering HTML
+    template_engine: TemplateEngine,
 }
 
 impl SphinxBuilder {
@@ -89,6 +94,13 @@ impl SphinxBuilder {
         let (theme_registry, active_theme) =
             Self::init_themes(&config, &source_dir)?;
 
+        // Initialize navigation builder with root_doc (aka master_doc)
+        let master_doc = config.root_doc.clone().unwrap_or_else(|| "index".to_string());
+        let navigation = NavigationBuilder::new(master_doc);
+
+        // Initialize template engine
+        let template_engine = TemplateEngine::new(&config)?;
+
         Ok(Self {
             config,
             source_dir,
@@ -104,6 +116,8 @@ impl SphinxBuilder {
             extension_loader,
             theme_registry,
             active_theme,
+            navigation: Arc::new(Mutex::new(navigation)),
+            template_engine,
         })
     }
 
@@ -203,8 +217,8 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Collect document titles from all source files (first pass).
-    /// This is used to populate toctree entries with proper document titles.
+    /// Collect document titles and toctree entries from all source files (first pass).
+    /// This is used to populate toctree entries with proper document titles and build navigation.
     fn collect_document_titles(&self, files: &[PathBuf]) -> Result<()> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.parallel_jobs)
@@ -213,7 +227,8 @@ impl SphinxBuilder {
         // Pre-canonicalize output directory for comparison
         let canonical_output = self.output_dir.canonicalize().ok();
 
-        let titles: Vec<_> = pool.install(|| {
+        // Collect titles and toctree entries
+        let doc_info: Vec<_> = pool.install(|| {
             files
                 .par_iter()
                 .filter_map(|file_path| {
@@ -241,20 +256,31 @@ impl SphinxBuilder {
                         .to_string_lossy()
                         .replace('\\', "/"); // Normalize path separators
 
-                    // Only include if the document has a non-empty title
-                    if !doc.title.is_empty() && doc.title != "Untitled" {
-                        Some((doc_path, doc.title))
+                    // Extract toctree entries
+                    let toctree_entries = self.extract_toctree_references(&doc).unwrap_or_default();
+
+                    // Return doc info
+                    let title = if !doc.title.is_empty() && doc.title != "Untitled" {
+                        doc.title
                     } else {
-                        None
-                    }
+                        doc_path.clone()
+                    };
+
+                    Some((doc_path, title, toctree_entries))
                 })
                 .collect()
         });
 
-        // Store collected titles
+        // Store collected titles and build navigation
         let mut doc_titles = self.document_titles.lock().unwrap();
-        for (path, title) in titles {
-            doc_titles.insert(path, title);
+        let mut nav = self.navigation.lock().unwrap();
+
+        for (path, title, toctree_entries) in doc_info {
+            doc_titles.insert(path.clone(), title.clone());
+            nav.register_document(&path, &title);
+            if !toctree_entries.is_empty() {
+                nav.register_toctree(&path, toctree_entries);
+            }
         }
 
         Ok(())
@@ -540,6 +566,12 @@ impl SphinxBuilder {
         let document = self.parser.parse(file_path, &content)
             .with_context(|| format!("Failed to parse file: {}", file_path.display()))?;
 
+        // Get the document path for navigation lookup
+        let doc_path = relative_path
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/");
+
         // Render document content to HTML with document titles for toctree
         let mut renderer = HtmlRenderer::new();
         {
@@ -550,8 +582,14 @@ impl SphinxBuilder {
         }
         let body_html = renderer.render_document_content(&document.content);
 
-        // Build the full HTML document with proper head section
-        let rendered_html = self.render_full_html(&document, &body_html);
+        // Get navigation context for this page
+        let page_nav = {
+            let nav = self.navigation.lock().unwrap();
+            nav.get_page_navigation(&doc_path)
+        };
+
+        // Build the full HTML document using the template engine
+        let rendered_html = self.render_full_html(&document, &body_html, &doc_path, &page_nav);
 
         // Write output file
         let output_path = self.get_output_path(file_path)?;
@@ -587,57 +625,171 @@ impl SphinxBuilder {
         Ok(output_path)
     }
 
-    /// Render a full HTML document with proper head section including CSS/JS
-    fn render_full_html(&self, document: &Document, body_html: &str) -> String {
-        let mut css_links = Vec::new();
-        let mut js_scripts = Vec::new();
-
-        // Add theme stylesheets
+    /// Render a full HTML document using the template engine
+    fn render_full_html(
+        &self,
+        document: &Document,
+        body_html: &str,
+        doc_path: &str,
+        page_nav: &PageNavigation,
+    ) -> String {
+        // Build CSS file list
+        let mut css_files: Vec<String> = Vec::new();
         if let Some(ref theme) = self.active_theme {
             for stylesheet in &theme.stylesheets {
-                css_links.push(format!(
-                    r#"<link rel="stylesheet" href="_static/{}" />"#,
-                    stylesheet.path
-                ));
-            }
-            for script in &theme.scripts {
-                let mut attrs = format!(r#"src="_static/{}""#, script.path);
-                if script.defer {
-                    attrs.push_str(" defer");
-                }
-                if script.async_ {
-                    attrs.push_str(" async");
-                }
-                js_scripts.push(format!("<script {}></script>", attrs));
+                css_files.push(format!("_static/{}", stylesheet.path));
             }
         }
-
-        // Add config CSS files
         for css_file in &self.config.html_css_files {
-            css_links.push(format!(
-                r#"<link rel="stylesheet" href="_static/{}" />"#,
-                css_file
-            ));
+            css_files.push(format!("_static/{}", css_file));
         }
 
-        // Add config JS files
+        // Build JS file list
+        let mut script_files: Vec<String> = Vec::new();
+        if let Some(ref theme) = self.active_theme {
+            for script in &theme.scripts {
+                script_files.push(format!("_static/{}", script.path));
+            }
+        }
         for js_file in &self.config.html_js_files {
-            js_scripts.push(format!(
-                r#"<script src="_static/{}"></script>"#,
-                js_file
-            ));
+            script_files.push(format!("_static/{}", js_file));
         }
 
-        // Build title
+        // Get page title
+        let title = if document.title.is_empty() || document.title == "Untitled" {
+            String::new()
+        } else {
+            document.title.clone()
+        };
+
+        // Get master_doc (root_doc in config)
+        let master_doc = self.config.root_doc.clone().unwrap_or_else(|| "index".to_string());
+
+        // Render toctree for sidebar
+        let toctree_html = {
+            let nav = self.navigation.lock().unwrap();
+            let options = ToctreeOptions::default();
+            nav.render_toctree(&options)
+        };
+
+        // Render page TOC from document's own TOC entries
+        let page_toc_html = self.render_page_toc(document);
+        let display_toc = !document.toc.is_empty();
+
+        // Build template context
+        let mut ctx = TemplateContext::new();
+
+        // Core content
+        ctx.insert("body", body_html).ok();
+        ctx.insert("title", &title).ok();
+        ctx.insert("docstitle", &self.config.project).ok();
+        ctx.insert("project", &self.config.project).ok();
+        ctx.insert("version", &self.config.version).ok();
+
+        // Language
+        ctx.insert("language", self.config.language.as_deref().unwrap_or("en")).ok();
+
+        // CSS and JS files
+        ctx.insert("css_files", &css_files).ok();
+        ctx.insert("script_files", &script_files).ok();
+
+        // Navigation
+        ctx.insert("parents", &page_nav.parents).ok();
+        ctx.insert("prev", &page_nav.prev).ok();
+        ctx.insert("next", &page_nav.next).ok();
+        ctx.insert("master_doc", &master_doc).ok();
+
+        // Toctree for sidebar
+        ctx.insert("toctree_html", &toctree_html).ok();
+
+        // Page TOC
+        ctx.insert("toc", &page_toc_html).ok();
+        ctx.insert("display_toc", display_toc).ok();
+
+        // Logo and favicon
+        if let Some(ref logo) = self.config.html_logo {
+            ctx.insert("logo_url", logo).ok();
+            ctx.insert("logo_alt", "Logo").ok();
+        }
+        if let Some(ref favicon) = self.config.html_favicon {
+            ctx.insert("favicon_url", favicon).ok();
+        }
+
+        // Copyright and attribution
+        ctx.insert("copyright", self.config.copyright.as_deref().unwrap_or("")).ok();
+        ctx.insert("show_copyright", self.config.copyright.is_some()).ok();
+        ctx.insert("show_sphinx", true).ok();
+        ctx.insert("sphinx_version", env!("CARGO_PKG_VERSION")).ok();
+
+        // Source info
+        ctx.insert("show_source", self.config.html_show_sourcelink.unwrap_or(true)).ok();
+        ctx.insert("has_source", true).ok();
+        let sourcename = format!("{}.rst.txt", doc_path);
+        ctx.insert("sourcename", &sourcename).ok();
+
+        // Theme options (with theme_ prefix for template access)
+        // Use default values from the theme's options schema
+        if let Some(ref theme) = self.active_theme {
+            for (key, spec) in &theme.options_schema {
+                let theme_key = format!("theme_{}", key);
+                ctx.insert(&theme_key, &spec.default).ok();
+            }
+        }
+
+        // Try to render using the template engine
+        match self.template_engine.render("layout.html", &ctx.build()) {
+            Ok(html) => html,
+            Err(e) => {
+                // Fallback to simple HTML if template fails
+                warn!("Template rendering failed: {}, using fallback", e);
+                self.render_fallback_html(document, body_html, &css_files, &script_files)
+            }
+        }
+    }
+
+    /// Render the page's own table of contents
+    fn render_page_toc(&self, document: &Document) -> String {
+        if document.toc.is_empty() {
+            return String::new();
+        }
+
+        let mut html = String::from("<ul>\n");
+        for entry in &document.toc {
+            html.push_str(&format!(
+                "<li><a href=\"#{}\">{}</a></li>\n",
+                html_escape::encode_text(&entry.anchor),
+                html_escape::encode_text(&entry.title)
+            ));
+        }
+        html.push_str("</ul>\n");
+        html
+    }
+
+    /// Fallback HTML rendering when template engine fails
+    fn render_fallback_html(
+        &self,
+        document: &Document,
+        body_html: &str,
+        css_files: &[String],
+        script_files: &[String],
+    ) -> String {
         let page_title = if document.title.is_empty() || document.title == "Untitled" {
             self.config.project.clone()
         } else {
             format!("{} — {}", document.title, self.config.project)
         };
 
-        // Build the full HTML
-        let css_section = css_links.join("\n    ");
-        let js_section = js_scripts.join("\n    ");
+        let css_section: String = css_files
+            .iter()
+            .map(|f| format!(r#"<link rel="stylesheet" href="{}" />"#, f))
+            .collect::<Vec<_>>()
+            .join("\n    ");
+
+        let js_section: String = script_files
+            .iter()
+            .map(|f| format!(r#"<script src="{}"></script>"#, f))
+            .collect::<Vec<_>>()
+            .join("\n    ");
 
         format!(
             r#"<!DOCTYPE html>
@@ -649,7 +801,11 @@ impl SphinxBuilder {
     {}
 </head>
 <body>
-    {}
+    <div class="document">
+        <div class="body">
+            {}
+        </div>
+    </div>
     {}
 </body>
 </html>"#,

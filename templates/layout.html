@@ -41,7 +41,7 @@
     <div class="documentwrapper">
       <div class="bodywrapper">
         <div class="body" role="main">
-          {% block body %}{{ body }}{% endblock %}
+          {% block body %}{{ body|safe }}{% endblock %}
         </div>
       </div>
     </div>
@@ -56,9 +56,16 @@
         </p>
         {% endif %}
 
+        {% if toctree_html %}
+        <h3>Navigation</h3>
+        <ul>
+        {{ toctree_html|safe }}
+        </ul>
+        {% endif %}
+
         {% if display_toc %}
         <h3>Table of Contents</h3>
-        {{ toc }}
+        {{ toc|safe }}
         {% endif %}
 
         {% if parents %}

@@ -48,7 +48,11 @@
 
         <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Main navigation">
           {% block menu %}
-          {{ toctree(maxdepth=theme_navigation_depth|default(4), collapse=theme_collapse_navigation|default(true), includehidden=theme_includehidden|default(true), titles_only=theme_titles_only|default(false)) }}
+          {% if toctree_html %}
+          <ul>
+          {{ toctree_html|safe }}
+          </ul>
+          {% endif %}
           {% endblock %}
         </div>
       </div>
@@ -84,7 +88,7 @@
           <!-- Page content -->
           <div role="main" class="document" itemscope itemtype="http://schema.org/Article">
             <div itemprop="articleBody">
-              {% block body %}{{ body }}{% endblock %}
+              {% block body %}{{ body|safe }}{% endblock %}
             </div>
           </div>
 

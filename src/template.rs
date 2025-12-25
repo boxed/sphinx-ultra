@@ -147,7 +147,7 @@ impl TemplateEngine {
             },
         );
 
-        // Add css_tag function
+        // Add css_tag function - returns safe HTML
         env.add_function(
             "css_tag",
             |args: &[Value]| -> Result<Value, MinijinjaError> {
@@ -161,18 +161,19 @@ impl TemplateEngine {
                 let filename = if let Some(css_str) = css.as_str() {
                     css_str
                 } else {
-                    return Ok(Value::from(""));
+                    return Ok(Value::from_safe_string(String::new()));
                 };
 
                 let tag = format!(
                     r#"<link rel="stylesheet" href="{}" type="text/css" />"#,
                     filename
                 );
-                Ok(Value::from(tag))
+                // Use from_safe_string to prevent HTML escaping
+                Ok(Value::from_safe_string(tag))
             },
         );
 
-        // Add js_tag function
+        // Add js_tag function - returns safe HTML
         env.add_function(
             "js_tag",
             |args: &[Value]| -> Result<Value, MinijinjaError> {
@@ -183,20 +184,21 @@ impl TemplateEngine {
                 let filename = if let Some(js_str) = js.as_str() {
                     js_str
                 } else {
-                    return Ok(Value::from(""));
+                    return Ok(Value::from_safe_string(String::new()));
                 };
 
                 let tag = format!(r#"<script src="{}"></script>"#, filename);
-                Ok(Value::from(tag))
+                // Use from_safe_string to prevent HTML escaping
+                Ok(Value::from_safe_string(tag))
             },
         );
 
-        // Add toctree function
+        // Add toctree function - returns safe HTML
         env.add_function(
             "toctree",
             |_args: &[Value]| -> Result<Value, MinijinjaError> {
                 // TODO: Implement actual toctree generation
-                Ok(Value::from("<div class=\"toctree-wrapper\"></div>"))
+                Ok(Value::from_safe_string("<div class=\"toctree-wrapper\"></div>".to_string()))
             },
         );
 
@@ -222,6 +224,15 @@ impl TemplateEngine {
                 }
             },
         );
+
+        // Add |safe filter to mark content as safe HTML (no escaping)
+        env.add_filter("safe", |value: Value| -> Result<Value, MinijinjaError> {
+            if let Some(s) = value.as_str() {
+                Ok(Value::from_safe_string(s.to_string()))
+            } else {
+                Ok(value)
+            }
+        });
     }
 
     /// Render a template with the given context

@@ -183,6 +183,20 @@ impl Parser {
                 continue;
             }
 
+            // Check for block quote (indented text that isn't part of a directive)
+            // Block quotes start with indentation (at least 3 spaces or a tab)
+            if line.starts_with("   ") || line.starts_with("\t") {
+                let (blockquote_content, consumed_lines) = self.parse_blockquote(&lines[i..]);
+                if !blockquote_content.trim().is_empty() {
+                    nodes.push(RstNode::BlockQuote {
+                        content: blockquote_content,
+                        line: i + 1,
+                    });
+                }
+                i += consumed_lines;
+                continue;
+            }
+
             // Default to paragraph
             let (paragraph_content, consumed_lines) = self.parse_paragraph(&lines[i..]);
             nodes.push(RstNode::Paragraph {
@@ -354,6 +368,36 @@ impl Parser {
             content.push_str(trimmed);
             content.push(' ');
             consumed_lines += 1;
+        }
+
+        (content.trim().to_string(), consumed_lines)
+    }
+
+    fn parse_blockquote(&self, lines: &[&str]) -> (String, usize) {
+        let mut content = String::new();
+        let mut consumed_lines = 0;
+
+        for line in lines {
+            // Block quote continues while lines are indented or empty
+            if line.starts_with("   ") || line.starts_with("\t") {
+                // Remove the leading indentation (3 spaces or 1 tab)
+                let dedented = if line.starts_with("   ") {
+                    &line[3..]
+                } else {
+                    &line[1..]
+                };
+                content.push_str(dedented);
+                content.push('\n');
+                consumed_lines += 1;
+            } else if line.trim().is_empty() {
+                // Empty lines can be part of the block quote if more indented content follows
+                // But we'll stop at empty lines for simplicity (can be enhanced later)
+                consumed_lines += 1;
+                break;
+            } else {
+                // Non-indented non-empty line ends the block quote
+                break;
+            }
         }
 
         (content.trim().to_string(), consumed_lines)

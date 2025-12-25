@@ -193,6 +193,11 @@ pub enum RstNode {
         name: String,
         line: usize,
     },
+    /// Block quote (indented text)
+    BlockQuote {
+        content: String,
+        line: usize,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

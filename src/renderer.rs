@@ -117,11 +117,13 @@ impl HtmlRenderer {
             RstNode::Title { text, level, .. } => {
                 let slug = slugify(text);
                 let level = (*level).min(6).max(1);
+                // Process inline markup in titles (including roles)
+                let rendered_text = self.render_rst_inline(text);
                 format!(
                     "<h{level} id=\"{slug}\">{text}</h{level}>",
                     level = level,
                     slug = slug,
-                    text = html_escape::encode_text(text)
+                    text = rendered_text
                 )
             }
 
@@ -214,6 +216,12 @@ impl HtmlRenderer {
             RstNode::LinkTarget { name, .. } => {
                 // Render as an invisible anchor that can be linked to
                 format!("<span id=\"{}\"></span>", html_escape::encode_text(name))
+            }
+
+            RstNode::BlockQuote { content, .. } => {
+                // Render block quote with inline RST markup processing
+                let rendered_content = self.render_rst_inline(content);
+                format!("<blockquote>\n<p>{}</p>\n</blockquote>", rendered_content)
             }
         }
     }
@@ -1090,8 +1098,8 @@ See :ref:`installation-guide` for more info.
         // Should have an anchor/id for the link target
         assert!(html.contains("id=\"installation-guide\""), "should have anchor id for link target");
 
-        // The :ref: role should create a link to the anchor
-        assert!(html.contains("href=\"#installation-guide\""), "ref should link to the anchor");
+        // The :ref: role should create a link in "target.html#target" format
+        assert!(html.contains("href=\"installation-guide.html#installation-guide\""), "ref should link to the anchor");
     }
 
     #[test]
@@ -1286,10 +1294,10 @@ See :ref:`attrs <attributes>`.
             html
         );
 
-        // The href should point to #attributes
+        // The href should point to attributes.html#attributes
         assert!(
-            html.contains("href=\"#attributes\""),
-            "link should point to #attributes, got: {}",
+            html.contains("href=\"attributes.html#attributes\""),
+            "link should point to attributes.html#attributes, got: {}",
             html
         );
 
@@ -1301,6 +1309,105 @@ See :ref:`attrs <attributes>`.
         assert!(
             !html.contains("attrs <attributes>"),
             "should not show raw angle brackets in link text"
+        );
+    }
+
+    #[test]
+    fn test_blockquote_rendering() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"Title
+=====
+
+Type: `Union[int, str]`
+
+    See :ref:`after <after>`
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // Blockquote should be rendered
+        assert!(
+            html.contains("<blockquote>"),
+            "indented text should be wrapped in blockquote, got: {}",
+            html
+        );
+
+        // The :ref: role inside blockquote should link to after.html#after
+        assert!(
+            html.contains("href=\"after.html#after\""),
+            "ref should link to after.html#after, got: {}",
+            html
+        );
+
+        // The link text should be "after"
+        assert!(
+            html.contains(">after</a>"),
+            "link text should be 'after', got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_complex_rst_with_blockquote_and_ref() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"`after`       (:ref:`evaluated <evaluate>`)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Type: `Union[int, str]`
+
+    See :ref:`after <after>`
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // Title should be recognized
+        assert!(
+            doc.title.contains("after"),
+            "title should contain 'after', got: {}",
+            doc.title
+        );
+
+        // Blockquote should be rendered
+        assert!(
+            html.contains("<blockquote>"),
+            "indented text should be wrapped in blockquote, got: {}",
+            html
+        );
+
+        // The :ref: in the title should link to evaluate.html#evaluate
+        assert!(
+            html.contains("href=\"evaluate.html#evaluate\""),
+            "ref in title should link to evaluate.html#evaluate, got: {}",
+            html
+        );
+
+        // The :ref: in the blockquote should link to after.html#after
+        assert!(
+            html.contains("href=\"after.html#after\""),
+            "ref in blockquote should link to after.html#after, got: {}",
+            html
         );
     }
 }

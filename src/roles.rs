@@ -122,9 +122,10 @@ struct RefRole;
 impl RoleProcessor for RefRole {
     fn process(&self, role: &Role) -> Result<String> {
         let display_text = role.text.as_ref().unwrap_or(&role.target);
+        // Generate href as "target.html#target" format for cross-page references
         Ok(format!(
-            "<a class=\"reference internal\" href=\"#{}\">{}</a>",
-            role.target, display_text
+            "<a class=\"reference internal\" href=\"{}.html#{}\">{}</a>",
+            role.target, role.target, display_text
         ))
     }
 
