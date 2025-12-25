@@ -163,8 +163,49 @@ impl PythonConfigParser {
 
     /// Simple parser for basic conf.py configurations (stub implementation)
     fn simple_parse_conf_py(&mut self, content: &str) -> Result<()> {
-        // Parse simple assignment statements like: variable = "value"
+        // First, join multi-line statements
+        let mut normalized = String::new();
+        let mut in_multiline = false;
+        let mut bracket_count = 0;
+        let mut paren_count = 0;
+        let mut brace_count = 0;
+
         for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Skip comments and empty lines (unless in multiline)
+            if !in_multiline && (trimmed.is_empty() || trimmed.starts_with('#')) {
+                continue;
+            }
+
+            // Count brackets to detect multi-line expressions
+            for ch in trimmed.chars() {
+                match ch {
+                    '[' => bracket_count += 1,
+                    ']' => bracket_count -= 1,
+                    '(' => paren_count += 1,
+                    ')' => paren_count -= 1,
+                    '{' => brace_count += 1,
+                    '}' => brace_count -= 1,
+                    _ => {}
+                }
+            }
+
+            if in_multiline {
+                normalized.push_str(" ");
+                normalized.push_str(trimmed);
+            } else {
+                if !normalized.is_empty() {
+                    normalized.push('\n');
+                }
+                normalized.push_str(trimmed);
+            }
+
+            in_multiline = bracket_count > 0 || paren_count > 0 || brace_count > 0;
+        }
+
+        // Parse the normalized content
+        for line in normalized.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;
@@ -172,6 +213,7 @@ impl PythonConfigParser {
 
             // Parse simple assignments
             if let Some((key, value)) = self.parse_simple_assignment(line) {
+                log::debug!("Parsed config: {} = {:?}", key, value);
                 self.conf_namespace.insert(key, value);
             }
         }
@@ -252,7 +294,19 @@ impl PythonConfigParser {
                 .and_then(|val| val.as_array())
                 .map(|arr| {
                     arr.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter_map(|v| {
+                            // Handle simple string
+                            if let Some(s) = v.as_str() {
+                                return Some(s.to_string());
+                            }
+                            // Handle tuple/array format: ["file.css", {...}]
+                            if let Some(inner_arr) = v.as_array() {
+                                if let Some(first) = inner_arr.first() {
+                                    return first.as_str().map(|s| s.to_string());
+                                }
+                            }
+                            None
+                        })
                         .collect()
                 })
                 .unwrap_or_default()

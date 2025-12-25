@@ -291,6 +291,7 @@ impl BuildConfig {
         // Try conf.py first (Sphinx standard)
         let conf_py_path = source_dir.join("conf.py");
         if conf_py_path.exists() {
+            log::info!("Loading configuration from {}", conf_py_path.display());
             return Self::from_conf_py(conf_py_path);
         }
 
