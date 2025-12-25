@@ -424,6 +424,7 @@ impl DirectiveProcessor for LiteralIncludeDirective {
         options.insert("start-line".to_string(), DirectiveOptionType::Integer);
         options.insert("end-line".to_string(), DirectiveOptionType::Integer);
         options.insert("start-after".to_string(), DirectiveOptionType::String);
+        options.insert("start-at".to_string(), DirectiveOptionType::String);
         options.insert("end-before".to_string(), DirectiveOptionType::String);
         options.insert("prepend".to_string(), DirectiveOptionType::String);
         options.insert("append".to_string(), DirectiveOptionType::String);
@@ -614,6 +615,7 @@ impl DirectiveProcessor for IncludeDirective {
         options.insert("start-line".to_string(), DirectiveOptionType::Integer);
         options.insert("end-line".to_string(), DirectiveOptionType::Integer);
         options.insert("start-after".to_string(), DirectiveOptionType::String);
+        options.insert("start-at".to_string(), DirectiveOptionType::String);
         options.insert("end-before".to_string(), DirectiveOptionType::String);
         options.insert("literal".to_string(), DirectiveOptionType::Flag);
         options.insert("code".to_string(), DirectiveOptionType::String);

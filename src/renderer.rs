@@ -448,6 +448,13 @@ impl HtmlRenderer {
             }
         }
 
+        // Handle start-at option (find line containing this text and start at it, inclusive)
+        if let Some(start_at) = options.get("start-at") {
+            if let Some(pos) = lines.iter().position(|line| line.contains(start_at.as_str())) {
+                lines = lines[pos..].to_vec();
+            }
+        }
+
         // Handle end-before option (find line containing this text and end before it)
         if let Some(end_before) = options.get("end-before") {
             if let Some(pos) = lines.iter().position(|line| line.contains(end_before.as_str())) {
@@ -2158,6 +2165,47 @@ Type: `Union[int, str]`
         assert!(!html.contains("HEADER"), "should NOT contain HEADER, got: {}", html);
         assert!(!html.contains("# START"), "should NOT contain # START marker, got: {}", html);
         assert!(!html.contains("# END"), "should NOT contain # END marker, got: {}", html);
+    }
+
+    #[test]
+    fn test_literalinclude_with_start_at() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use tempfile::TempDir;
+
+        // Create a temp directory with a source file to include
+        let temp_dir = TempDir::new().unwrap();
+        let source_file = temp_dir.path().join("example.py");
+        std::fs::write(
+            &source_file,
+            "# HEADER\ndef main():\n    # START MARKER\n    print('included')\n    pass\n",
+        )
+        .unwrap();
+
+        // Create an RST file that includes starting AT the marker (inclusive)
+        let rst_content = r#"Title
+=====
+
+.. literalinclude:: example.py
+   :start-at: # START MARKER
+"#;
+
+        let rst_file = temp_dir.path().join("doc.rst");
+        std::fs::write(&rst_file, rst_content).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(&rst_file, rst_content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.set_source_dir(temp_dir.path().to_path_buf());
+        let html = renderer.render_document_content(&doc.content);
+
+        // start-at INCLUDES the matching line (unlike start-after which excludes it)
+        assert!(html.contains("# START MARKER"), "should contain '# START MARKER', got: {}", html);
+        assert!(html.contains("included"), "should contain 'included', got: {}", html);
+        assert!(!html.contains("HEADER"), "should NOT contain HEADER, got: {}", html);
+        assert!(!html.contains("def main"), "should NOT contain 'def main', got: {}", html);
     }
 
     #[test]
