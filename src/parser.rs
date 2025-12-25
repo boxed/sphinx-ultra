@@ -371,8 +371,10 @@ impl Parser {
     fn extract_title(&self, content: &DocumentContent) -> String {
         match content {
             DocumentContent::RestructuredText(rst) => {
+                // In RST, the first title in the document is the document title,
+                // regardless of which underline character is used
                 for node in &rst.ast {
-                    if let RstNode::Title { text, level: 1, .. } = node {
+                    if let RstNode::Title { text, .. } = node {
                         return text.clone();
                     }
                 }
@@ -440,5 +442,120 @@ impl Parser {
         let mut output_path = source_path.to_path_buf();
         output_path.set_extension("html");
         Ok(output_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn create_parser() -> Parser {
+        let config = crate::config::BuildConfig::default();
+        Parser::new(&config).unwrap()
+    }
+
+    fn parse_rst_content(parser: &Parser, content: &str) -> Document {
+        let mut temp_file = NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+        temp_file.flush().unwrap();
+        parser.parse(temp_file.path(), content).unwrap()
+    }
+
+    #[test]
+    fn test_title_with_equals_underline() {
+        let parser = create_parser();
+        let content = "My Title\n========\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_with_dash_underline() {
+        let parser = create_parser();
+        let content = "My Title\n--------\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_with_tilde_underline() {
+        let parser = create_parser();
+        let content = "My Title\n~~~~~~~~\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_with_caret_underline() {
+        let parser = create_parser();
+        let content = "My Title\n^^^^^^^^\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_with_hash_underline() {
+        let parser = create_parser();
+        let content = "My Title\n########\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_with_asterisk_underline() {
+        let parser = create_parser();
+        let content = "My Title\n********\n\nSome text.";
+        let doc = parse_rst_content(&parser, content);
+
+        assert_eq!(doc.title, "My Title");
+    }
+
+    #[test]
+    fn test_title_levels() {
+        let parser = create_parser();
+
+        // # is level 1
+        assert_eq!(parser.get_rst_title_level('#'), 1);
+        // * is level 2
+        assert_eq!(parser.get_rst_title_level('*'), 2);
+        // = is level 3
+        assert_eq!(parser.get_rst_title_level('='), 3);
+        // - is level 4
+        assert_eq!(parser.get_rst_title_level('-'), 4);
+        // ^ is level 5
+        assert_eq!(parser.get_rst_title_level('^'), 5);
+        // " is level 6
+        assert_eq!(parser.get_rst_title_level('"'), 6);
+    }
+
+    #[test]
+    fn test_multiple_titles_with_different_underlines() {
+        let parser = create_parser();
+        let content = r#"Main Title
+==========
+
+Some intro text.
+
+Subsection
+----------
+
+More text.
+
+Sub-subsection
+^^^^^^^^^^^^^^
+
+Even more text.
+"#;
+        let doc = parse_rst_content(&parser, content);
+
+        // First title becomes the document title
+        assert_eq!(doc.title, "Main Title");
     }
 }
