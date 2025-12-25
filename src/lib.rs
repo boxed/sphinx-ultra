@@ -11,7 +11,6 @@ pub mod domains;
 pub mod environment;
 pub mod error;
 pub mod extensions;
-pub mod html_builder;
 pub mod inventory;
 pub mod matching;
 pub mod parser;
@@ -39,7 +38,6 @@ pub use domains::{CrossReference, DomainObject, DomainRegistry, DomainValidator,
 pub use environment::BuildEnvironment;
 pub use error::BuildError;
 pub use extensions::{ExtensionLoader, SphinxApp, SphinxExtension};
-pub use html_builder::HTMLBuilder;
 pub use inventory::{InventoryFile, InventoryItem};
 pub use parser::Parser;
 pub use python_config::{ConfPyConfig, PythonConfigParser};

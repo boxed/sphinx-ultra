@@ -14,6 +14,7 @@ use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
 use crate::renderer::HtmlRenderer;
+use crate::theme::{Theme, ThemeRegistry};
 use crate::utils;
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,12 @@ pub struct SphinxBuilder {
     sphinx_app: Option<SphinxApp>,
     #[allow(dead_code)]
     extension_loader: ExtensionLoader,
+    /// Theme registry for discovering themes
+    #[allow(dead_code)]
+    theme_registry: ThemeRegistry,
+    /// The active theme
+    #[allow(dead_code)]
+    active_theme: Option<Theme>,
 }
 
 impl SphinxBuilder {
@@ -78,6 +85,10 @@ impl SphinxBuilder {
             }
         }
 
+        // Initialize theme system
+        let (theme_registry, active_theme) =
+            Self::init_themes(&config, &source_dir)?;
+
         Ok(Self {
             config,
             source_dir,
@@ -91,7 +102,72 @@ impl SphinxBuilder {
             document_titles: Arc::new(Mutex::new(HashMap::new())),
             sphinx_app: Some(sphinx_app),
             extension_loader,
+            theme_registry,
+            active_theme,
         })
+    }
+
+    /// Initialize theme system - discover themes and find the configured theme
+    fn init_themes(config: &BuildConfig, source_dir: &Path) -> Result<(ThemeRegistry, Option<Theme>)> {
+        let mut registry = ThemeRegistry::new();
+
+        // Add built-in themes directory relative to executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let themes_dir = exe_dir.join("themes");
+                if themes_dir.exists() {
+                    registry.add_search_path(themes_dir);
+                }
+            }
+        }
+
+        // Add themes directory relative to source directory
+        let src_themes = source_dir.join("_themes");
+        if src_themes.exists() {
+            registry.add_search_path(src_themes);
+        }
+
+        // Add user-configured theme paths
+        for theme_path in &config.theme.theme_paths {
+            let abs_path = if theme_path.is_absolute() {
+                theme_path.clone()
+            } else {
+                source_dir.join(theme_path)
+            };
+            if abs_path.exists() {
+                registry.add_search_path(abs_path);
+            }
+        }
+
+        // Discover themes in search paths
+        registry.discover_themes()?;
+
+        // Get the configured theme name
+        let theme_name = &config.theme.name;
+
+        // Try to find the theme: first in registry, then via Python
+        let theme = if let Some(t) = registry.get_theme(theme_name) {
+            Some(t.clone())
+        } else {
+            // Try to find via Python (pip-installed theme)
+            if registry.discover_python_theme(theme_name)? {
+                registry.get_theme(theme_name).cloned()
+            } else {
+                None
+            }
+        };
+
+        match theme {
+            Some(t) => {
+                info!("Using theme '{}' from {}", t.name, t.path.display());
+                Ok((registry, Some(t)))
+            }
+            None => Err(anyhow::anyhow!(
+                "Theme '{}' not found. Searched in built-in themes, source directory, \
+                 configured theme paths, and Python packages.",
+                theme_name
+            )),
+        }
     }
 
     pub fn set_parallel_jobs(&mut self, jobs: usize) {
@@ -389,7 +465,9 @@ impl SphinxBuilder {
             }
         }
         let body_html = renderer.render_document_content(&document.content);
-        let rendered_html = format!("<html><body>{}</body></html>", body_html);
+
+        // Build the full HTML document with proper head section
+        let rendered_html = self.render_full_html(&document, &body_html);
 
         // Write output file
         let output_path = self.get_output_path(file_path)?;
@@ -423,6 +501,80 @@ impl SphinxBuilder {
         Ok(output_path)
     }
 
+    /// Render a full HTML document with proper head section including CSS/JS
+    fn render_full_html(&self, document: &Document, body_html: &str) -> String {
+        let mut css_links = Vec::new();
+        let mut js_scripts = Vec::new();
+
+        // Add theme stylesheets
+        if let Some(ref theme) = self.active_theme {
+            for stylesheet in &theme.stylesheets {
+                css_links.push(format!(
+                    r#"<link rel="stylesheet" href="_static/{}" />"#,
+                    stylesheet.path
+                ));
+            }
+            for script in &theme.scripts {
+                let mut attrs = format!(r#"src="_static/{}""#, script.path);
+                if script.defer {
+                    attrs.push_str(" defer");
+                }
+                if script.async_ {
+                    attrs.push_str(" async");
+                }
+                js_scripts.push(format!("<script {}></script>", attrs));
+            }
+        }
+
+        // Add config CSS files
+        for css_file in &self.config.html_css_files {
+            css_links.push(format!(
+                r#"<link rel="stylesheet" href="_static/{}" />"#,
+                css_file
+            ));
+        }
+
+        // Add config JS files
+        for js_file in &self.config.html_js_files {
+            js_scripts.push(format!(
+                r#"<script src="_static/{}"></script>"#,
+                js_file
+            ));
+        }
+
+        // Build title
+        let page_title = if document.title.is_empty() || document.title == "Untitled" {
+            self.config.project.clone()
+        } else {
+            format!("{} — {}", document.title, self.config.project)
+        };
+
+        // Build the full HTML
+        let css_section = css_links.join("\n    ");
+        let js_section = js_scripts.join("\n    ");
+
+        format!(
+            r#"<!DOCTYPE html>
+<html lang="{}">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{}</title>
+    {}
+</head>
+<body>
+    {}
+    {}
+</body>
+</html>"#,
+            self.config.language.as_deref().unwrap_or("en"),
+            page_title,
+            css_section,
+            body_html,
+            js_section
+        )
+    }
+
     async fn generate_indices(&self, _documents: &[Document]) -> Result<()> {
         info!("Generating indices and cross-references");
         // TODO: Implement index generation
@@ -435,6 +587,16 @@ impl SphinxBuilder {
         // Create _static directory
         let static_output_dir = self.output_dir.join("_static");
         tokio::fs::create_dir_all(&static_output_dir).await?;
+
+        // Copy theme static assets first (so project assets can override)
+        if let Some(ref theme) = self.active_theme {
+            if let Some(ref theme_static_dir) = theme.static_dir {
+                if theme_static_dir.exists() {
+                    info!("Copying theme static assets from {}", theme_static_dir.display());
+                    self.copy_dir_to_static(theme_static_dir, &static_output_dir).await?;
+                }
+            }
+        }
 
         // Copy built-in static assets - use relative path from binary location
         let exe_dir = std::env::current_exe()?
@@ -476,21 +638,19 @@ impl SphinxBuilder {
                 .await?;
         }
 
-        // Copy project-specific static assets
-        let static_dirs = [
-            self.source_dir.join("_static"),
-            self.source_dir.join("_templates"),
-        ];
-
-        for static_dir in &static_dirs {
-            if static_dir.exists() {
-                let dest = self.output_dir.join(static_dir.file_name().unwrap());
-                utils::copy_dir_recursive(static_dir, &dest).await?;
-                debug!("Copied static directory: {:?}", static_dir);
-            }
+        // Copy project-specific static assets (these override theme assets)
+        let project_static = self.source_dir.join("_static");
+        if project_static.exists() {
+            info!("Copying project static assets from {}", project_static.display());
+            self.copy_dir_to_static(&project_static, &static_output_dir).await?;
         }
 
         Ok(())
+    }
+
+    /// Copy contents of a directory into the static output directory
+    async fn copy_dir_to_static(&self, src_dir: &Path, dest_dir: &Path) -> Result<()> {
+        utils::copy_dir_recursive(src_dir, dest_dir).await
     }
 
     async fn create_default_static_assets(&self, static_dir: &Path) -> Result<()> {
