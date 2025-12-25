@@ -14,6 +14,56 @@ use crate::document::{
 // use crate::roles::RoleRegistry; // TODO: Implement roles module
 use crate::utils;
 
+/// Minimum indentation for RST directive content (3 spaces or 1 tab)
+const MIN_INDENT: usize = 3;
+
+/// Check if a line is indented (has at least MIN_INDENT spaces or starts with a tab)
+fn is_indented(line: &str) -> bool {
+    if line.starts_with('\t') {
+        return true;
+    }
+    let indent = line.len() - line.trim_start().len();
+    indent >= MIN_INDENT
+}
+
+/// Get the indentation level of a line (number of leading spaces, tabs count as 4)
+fn get_indent(line: &str) -> usize {
+    let mut indent = 0;
+    for ch in line.chars() {
+        match ch {
+            ' ' => indent += 1,
+            '\t' => indent += 4,
+            _ => break,
+        }
+    }
+    indent
+}
+
+/// Strip indentation from a line, removing up to `amount` spaces (or equivalent tabs)
+fn strip_indent(line: &str, amount: usize) -> &str {
+    let mut chars = line.chars().peekable();
+    let mut removed = 0;
+    let mut byte_pos = 0;
+
+    while removed < amount {
+        match chars.peek() {
+            Some(' ') => {
+                chars.next();
+                removed += 1;
+                byte_pos += 1;
+            }
+            Some('\t') => {
+                chars.next();
+                removed += 4;
+                byte_pos += 1;
+            }
+            _ => break,
+        }
+    }
+
+    &line[byte_pos..]
+}
+
 pub struct Parser {
     rst_directive_regex: Regex,
     cross_ref_regex: Regex,
@@ -183,10 +233,7 @@ impl Parser {
                 // Skip any following indented lines that are part of the comment
                 while i < lines.len() {
                     let next_line = lines[i];
-                    if next_line.trim().is_empty()
-                        || next_line.starts_with("   ")
-                        || next_line.starts_with("\t")
-                    {
+                    if next_line.trim().is_empty() || is_indented(next_line) {
                         i += 1;
                     } else {
                         break;
@@ -196,8 +243,8 @@ impl Parser {
             }
 
             // Check for block quote (indented text that isn't part of a directive)
-            // Block quotes start with indentation (at least 3 spaces or a tab)
-            if line.starts_with("   ") || line.starts_with("\t") {
+            // Block quotes start with indentation (at least MIN_INDENT spaces or a tab)
+            if is_indented(line) {
                 let (blockquote_content, consumed_lines) = self.parse_blockquote(&lines[i..]);
                 if !blockquote_content.trim().is_empty() {
                     nodes.push(RstNode::BlockQuote {
@@ -230,9 +277,7 @@ impl Parser {
             if next_idx < lines.len() {
                 let next_line = lines[next_idx];
                 // Definition follows if next line is indented (but not empty)
-                if !next_line.trim().is_empty()
-                    && (next_line.starts_with("    ") || next_line.starts_with("\t"))
-                {
+                if !next_line.trim().is_empty() && is_indented(next_line) {
                     // This is a definition list - parse the definition
                     let (def_content, def_consumed) = self.parse_blockquote(&lines[next_idx..]);
 
@@ -318,7 +363,7 @@ impl Parser {
         let mut consumed_lines = 1;
         let mut i = 1;
 
-        // Parse options (lines starting with :option:)
+        // Parse options (indented lines starting with :option:)
         while i < lines.len() {
             let line = lines[i];
             if line.trim().is_empty() {
@@ -327,11 +372,9 @@ impl Parser {
                 continue;
             }
 
-            // Check for options - accept various indentation (3+ spaces or tab) followed by :option:
             let trimmed = line.trim_start();
-            let indent_len = line.len() - trimmed.len();
-            if indent_len >= 3 && trimmed.starts_with(':') {
-                // This is an option line
+            if is_indented(line) && trimmed.starts_with(':') {
+                // This is an option line like "   :option: value"
                 if let Some(colon_pos) = trimmed[1..].find(':') {
                     let option_name = &trimmed[1..colon_pos + 1];
                     let option_value = trimmed[colon_pos + 2..].trim();
@@ -339,11 +382,11 @@ impl Parser {
                 }
                 i += 1;
                 consumed_lines += 1;
-            } else if line.starts_with("   ") || line.starts_with("\t") {
-                // This is content
+            } else if is_indented(line) {
+                // Indented but not an option - this is content
                 break;
             } else {
-                // End of directive
+                // Not indented - end of directive
                 break;
             }
         }
@@ -351,8 +394,8 @@ impl Parser {
         // Parse content (indented lines)
         while i < lines.len() {
             let line = lines[i];
-            if line.starts_with("   ") || line.starts_with("\t") {
-                content.push_str(&line[3..]); // Remove 3 spaces of indentation
+            if is_indented(line) {
+                content.push_str(strip_indent(line, MIN_INDENT));
                 content.push('\n');
                 i += 1;
                 consumed_lines += 1;
@@ -386,7 +429,7 @@ impl Parser {
         let mut consumed_lines = 0;
 
         for line in lines {
-            if line.starts_with("   ") || line.starts_with("\t") || line.trim().is_empty() {
+            if is_indented(line) || line.trim().is_empty() {
                 content.push_str(line);
                 content.push('\n');
                 consumed_lines += 1;
@@ -410,9 +453,7 @@ impl Parser {
 
             // Stop at indented lines (could be start of definition, blockquote, etc.)
             // But only after we have some content (first line can't trigger this)
-            if consumed_lines > 0
-                && (line.starts_with("    ") || line.starts_with("\t"))
-            {
+            if consumed_lines > 0 && is_indented(line) {
                 break;
             }
 
@@ -430,14 +471,9 @@ impl Parser {
 
         for line in lines {
             // Block quote continues while lines are indented or empty
-            if line.starts_with("   ") || line.starts_with("\t") {
-                // Remove the leading indentation (3 spaces or 1 tab)
-                let dedented = if line.starts_with("   ") {
-                    &line[3..]
-                } else {
-                    &line[1..]
-                };
-                content.push_str(dedented);
+            if is_indented(line) {
+                // Remove the leading indentation
+                content.push_str(strip_indent(line, MIN_INDENT));
                 content.push('\n');
                 consumed_lines += 1;
             } else if line.trim().is_empty() {
@@ -461,11 +497,10 @@ impl Parser {
         let mut current_item = String::new();
 
         // Determine the initial indentation level
-        let first_line = lines[0];
-        let initial_indent = first_line.len() - first_line.trim_start().len();
+        let initial_indent = get_indent(lines[0]);
 
         for line in lines {
-            let line_indent = line.len() - line.trim_start().len();
+            let line_indent = get_indent(line);
             let trimmed = line.trim();
 
             // Check if this is a new list item at the same level
@@ -495,7 +530,7 @@ impl Parser {
                 if consumed_lines < lines.len() {
                     let next_line = lines[consumed_lines];
                     let next_trimmed = next_line.trim();
-                    let next_indent = next_line.len() - next_line.trim_start().len();
+                    let next_indent = get_indent(next_line);
                     if next_indent == initial_indent && (next_trimmed.starts_with("* ") || next_trimmed.starts_with("- ")) {
                         continue;
                     }
