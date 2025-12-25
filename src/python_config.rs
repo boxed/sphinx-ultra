@@ -614,6 +614,9 @@ impl ConfPyConfig {
         config.static_dirs = self.html_static_path.iter().map(PathBuf::from).collect();
         config.html_static_path = self.html_static_path.iter().map(PathBuf::from).collect();
 
+        // Map extra paths (copied to output root)
+        config.html_extra_path = self.html_extra_path.iter().map(PathBuf::from).collect();
+
         // Map HTML configuration
         if let Some(html_theme) = &self.html_theme {
             config.output.html_theme = html_theme.clone();
@@ -672,5 +675,51 @@ impl ConfPyConfig {
         config.exclude_patterns = self.exclude_patterns.clone();
 
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_html_extra_path_parsing() {
+        // Create a temporary conf.py with html_extra_path
+        let conf_py_content = r#"
+project = 'Test'
+html_extra_path = ['extra', 'robots.txt', 'sitemap.xml']
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".py").unwrap();
+        temp_file.write_all(conf_py_content.as_bytes()).unwrap();
+
+        let mut parser = PythonConfigParser::new().unwrap();
+        let conf = parser.parse_conf_py(temp_file.path()).unwrap();
+
+        assert_eq!(conf.html_extra_path.len(), 3);
+        assert!(conf.html_extra_path.contains(&"extra".to_string()));
+        assert!(conf.html_extra_path.contains(&"robots.txt".to_string()));
+        assert!(conf.html_extra_path.contains(&"sitemap.xml".to_string()));
+    }
+
+    #[test]
+    fn test_html_extra_path_converted_to_build_config() {
+        // Create a temporary conf.py with html_extra_path
+        let conf_py_content = r#"
+project = 'Test'
+html_extra_path = ['extra_files', '.nojekyll']
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".py").unwrap();
+        temp_file.write_all(conf_py_content.as_bytes()).unwrap();
+
+        let mut parser = PythonConfigParser::new().unwrap();
+        let conf = parser.parse_conf_py(temp_file.path()).unwrap();
+        let build_config = conf.to_build_config();
+
+        assert_eq!(build_config.html_extra_path.len(), 2);
+        assert_eq!(build_config.html_extra_path[0], std::path::PathBuf::from("extra_files"));
+        assert_eq!(build_config.html_extra_path[1], std::path::PathBuf::from(".nojekyll"));
     }
 }

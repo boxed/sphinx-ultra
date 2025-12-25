@@ -64,6 +64,9 @@ pub struct BuildConfig {
     /// HTML static paths
     pub html_static_path: Vec<PathBuf>,
 
+    /// HTML extra paths - directories copied to output root
+    pub html_extra_path: Vec<PathBuf>,
+
     /// HTML logo file
     pub html_logo: Option<String>,
 
@@ -202,6 +205,7 @@ impl Default for BuildConfig {
             html_css_files: vec![],
             html_js_files: vec![],
             html_static_path: vec![PathBuf::from("_static")],
+            html_extra_path: vec![],
             html_logo: None,
             html_favicon: None,
             html_title: None,

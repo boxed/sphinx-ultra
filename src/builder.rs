@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::{debug, info, warn};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -283,6 +283,9 @@ impl SphinxBuilder {
 
         // Copy static assets
         self.copy_static_assets().await?;
+
+        // Copy html_extra_path directories to output root
+        self.copy_extra_paths().await?;
 
         // Generate sitemap and search index
         self.generate_search_index(&processed_docs).await?;
@@ -651,6 +654,44 @@ impl SphinxBuilder {
     /// Copy contents of a directory into the static output directory
     async fn copy_dir_to_static(&self, src_dir: &Path, dest_dir: &Path) -> Result<()> {
         utils::copy_dir_recursive(src_dir, dest_dir).await
+    }
+
+    /// Copy html_extra_path directories to the output root
+    async fn copy_extra_paths(&self) -> Result<()> {
+        if self.config.html_extra_path.is_empty() {
+            return Ok(());
+        }
+
+        info!("Copying extra paths to output directory");
+
+        for extra_path in &self.config.html_extra_path {
+            // Resolve path relative to source directory
+            let src_path = if extra_path.is_absolute() {
+                extra_path.clone()
+            } else {
+                self.source_dir.join(extra_path)
+            };
+
+            if !src_path.exists() {
+                warn!("html_extra_path '{}' does not exist, skipping", src_path.display());
+                continue;
+            }
+
+            if src_path.is_dir() {
+                // Copy directory contents to output root
+                info!("Copying extra directory: {}", src_path.display());
+                utils::copy_dir_recursive(&src_path, &self.output_dir).await?;
+            } else if src_path.is_file() {
+                // Copy single file to output root
+                let file_name = src_path.file_name()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid file path: {}", src_path.display()))?;
+                let dest_path = self.output_dir.join(file_name);
+                info!("Copying extra file: {} -> {}", src_path.display(), dest_path.display());
+                tokio::fs::copy(&src_path, &dest_path).await?;
+            }
+        }
+
+        Ok(())
     }
 
     async fn create_default_static_assets(&self, static_dir: &Path) -> Result<()> {
