@@ -112,18 +112,18 @@
       </div>
 
       <!-- Right sidebar with page TOC -->
-      <aside class="toc-drawer">
+      <aside class="toc-drawer{% if not display_toc %} no-toc{% endif %}">
         <div class="toc-sticky toc-scroll">
+          {% if display_toc %}
           <div class="toc-title-container">
             <span class="toc-title">On this page</span>
           </div>
           <div class="toc-tree-container">
             <div class="toc-tree">
-              {% if display_toc %}
               {{ toc|safe }}
-              {% endif %}
             </div>
           </div>
+          {% endif %}
         </div>
       </aside>
     </div>

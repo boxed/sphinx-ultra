@@ -741,7 +741,7 @@ impl SphinxBuilder {
 
         // Render page TOC from document's own TOC entries
         let page_toc_html = self.render_page_toc(document);
-        let display_toc = !document.toc.is_empty();
+        let display_toc = document.toc.len() > 1;
 
         // Build template context
         let mut ctx = TemplateContext::new();
