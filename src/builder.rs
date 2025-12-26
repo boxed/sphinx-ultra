@@ -15,7 +15,7 @@ use crate::matching;
 use crate::navigation::{NavigationBuilder, PageNavigation, ToctreeOptions};
 use crate::parser::Parser;
 use crate::renderer::HtmlRenderer;
-use crate::template::{TemplateContext, TemplateEngine};
+use crate::template::{SafeHtml, TemplateContext, TemplateEngine};
 use crate::theme::{Theme, ThemeRegistry};
 use crate::utils;
 
@@ -30,6 +30,22 @@ pub struct BuildStats {
     pub warnings: usize,
     pub warning_details: Vec<BuildWarning>,
     pub error_details: Vec<BuildErrorReport>,
+}
+
+/// NavLink with SafeHtml title for template rendering (no escaping needed)
+#[derive(Debug, Clone, serde::Serialize)]
+struct NavLinkSafe {
+    title: SafeHtml,
+    link: String,
+}
+
+impl NavLinkSafe {
+    fn from_nav_link(link: &crate::navigation::NavLink) -> Self {
+        Self {
+            title: SafeHtml::new(&link.title),
+            link: link.link.clone(),
+        }
+    }
 }
 
 pub struct SphinxBuilder {
@@ -751,10 +767,13 @@ impl SphinxBuilder {
         ctx.insert("css_files", &css_files).ok();
         ctx.insert("script_files", &script_files).ok();
 
-        // Navigation
-        ctx.insert("parents", &page_nav.parents).ok();
-        ctx.insert("prev", &page_nav.prev).ok();
-        ctx.insert("next", &page_nav.next).ok();
+        // Navigation (with SafeHtml titles to avoid escaping rendered HTML)
+        let parents_safe: Vec<NavLinkSafe> = page_nav.parents.iter().map(NavLinkSafe::from_nav_link).collect();
+        let prev_safe = page_nav.prev.as_ref().map(NavLinkSafe::from_nav_link);
+        let next_safe = page_nav.next.as_ref().map(NavLinkSafe::from_nav_link);
+        ctx.insert("parents", &parents_safe).ok();
+        ctx.insert("prev", &prev_safe).ok();
+        ctx.insert("next", &next_safe).ok();
         ctx.insert("master_doc", &master_doc).ok();
 
         // Toctree for sidebar

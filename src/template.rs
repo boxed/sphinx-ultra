@@ -1,9 +1,24 @@
 use anyhow::Result;
 use log::info;
 use minijinja::{Environment, Error as MinijinjaError, ErrorKind, Value};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+
+/// Marker type for HTML strings that should not be escaped in templates.
+/// When serialized to JSON and then converted to minijinja Value, this will
+/// be treated as safe HTML (no escaping).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SafeHtml {
+    #[serde(rename = "__safe_html__")]
+    pub html: String,
+}
+
+impl SafeHtml {
+    pub fn new(html: impl Into<String>) -> Self {
+        Self { html: html.into() }
+    }
+}
 
 /// Template engine for rendering HTML pages (similar to Jinja2 in Sphinx)
 #[derive(Debug)]
@@ -286,6 +301,12 @@ impl TemplateEngine {
                 Value::from(values)
             }
             serde_json::Value::Object(obj) => {
+                // Check for SafeHtml marker: {"__safe_html__": "..."}
+                if obj.len() == 1 {
+                    if let Some(serde_json::Value::String(s)) = obj.get("__safe_html__") {
+                        return Value::from_safe_string(s.clone());
+                    }
+                }
                 // Convert to a simple map representation
                 let map: HashMap<String, Value> = obj
                     .iter()
