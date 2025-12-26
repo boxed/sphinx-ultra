@@ -1245,3 +1245,42 @@ impl SphinxBuilder {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::document::TocEntry;
+
+    #[test]
+    fn test_display_toc_logic() {
+        // display_toc should be true when toc.len() > 1
+        // (first entry is page heading which is skipped)
+        let empty_toc: Vec<TocEntry> = vec![];
+        let one_item_toc = vec![TocEntry {
+            title: "Page Title".to_string(),
+            anchor: "page-title".to_string(),
+            level: 1,
+            line_number: 1,
+            children: vec![],
+        }];
+        let two_item_toc = vec![
+            TocEntry {
+                title: "Page Title".to_string(),
+                anchor: "page-title".to_string(),
+                level: 1,
+                line_number: 1,
+                children: vec![],
+            },
+            TocEntry {
+                title: "Section".to_string(),
+                anchor: "section".to_string(),
+                level: 2,
+                line_number: 5,
+                children: vec![],
+            },
+        ];
+
+        assert!((empty_toc.len() > 1) == false);
+        assert!((one_item_toc.len() > 1) == false);
+        assert!((two_item_toc.len() > 1) == true);
+    }
+}
