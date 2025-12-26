@@ -164,7 +164,7 @@ impl NavigationBuilder {
             if pos > 0 {
                 let (prev_path, prev_title) = flat_docs[pos - 1];
                 nav.prev = Some(NavLink::new(
-                    prev_title,
+                    render_nav_title(prev_title),
                     format!("{}.html", prev_path),
                 ));
             }
@@ -173,7 +173,7 @@ impl NavigationBuilder {
             if pos + 1 < flat_docs.len() {
                 let (next_path, next_title) = flat_docs[pos + 1];
                 nav.next = Some(NavLink::new(
-                    next_title,
+                    render_nav_title(next_title),
                     format!("{}.html", next_path),
                 ));
             }
@@ -201,7 +201,7 @@ impl NavigationBuilder {
 
                 // Skip external URLs
                 if !child_path.starts_with("http://") && !child_path.starts_with("https://") {
-                    nav.children.push(NavLink::new(child_title, format!("{}.html", child_path)));
+                    nav.children.push(NavLink::new(render_nav_title(&child_title), format!("{}.html", child_path)));
                 }
             }
         }
@@ -220,7 +220,7 @@ impl NavigationBuilder {
     }
 
     fn find_path_to(&self, target: &str, node: &TocTreeNode, path: &mut Vec<NavLink>) -> bool {
-        path.push(NavLink::new(&node.title, format!("{}.html", &node.doc_path)));
+        path.push(NavLink::new(render_nav_title(&node.title), format!("{}.html", &node.doc_path)));
 
         if node.doc_path == target {
             return true;
@@ -474,6 +474,46 @@ mod tests {
         // intro should have index as parent
         assert_eq!(nav.parents.len(), 1);
         assert_eq!(nav.parents[0].title, "Welcome");
+    }
+
+    #[test]
+    fn test_prev_next_renders_inline_code() {
+        let mut builder = NavigationBuilder::new("index");
+
+        builder.register_document("index", "Welcome");
+        builder.register_document("intro", "`Introduction`");
+        builder.register_document("guide", "User `Guide`");
+
+        builder.register_toctree("index", vec!["intro".to_string(), "guide".to_string()]);
+
+        // Get nav for "guide" which has:
+        // - prev = intro ("`Introduction`") which should render to code
+        // - no next
+        let nav = builder.get_page_navigation("guide");
+
+        // prev title should have rendered inline code
+        assert!(nav.prev.is_some());
+        assert!(
+            nav.prev.as_ref().unwrap().title.contains("<code"),
+            "prev title should render backticks as code, got: {}",
+            nav.prev.as_ref().unwrap().title
+        );
+
+        // Should not contain raw backticks
+        assert!(
+            !nav.prev.as_ref().unwrap().title.contains('`'),
+            "prev title should not contain raw backticks, got: {}",
+            nav.prev.as_ref().unwrap().title
+        );
+
+        // Also check intro's next (guide with "User `Guide`")
+        let nav_intro = builder.get_page_navigation("intro");
+        assert!(nav_intro.next.is_some());
+        assert!(
+            nav_intro.next.as_ref().unwrap().title.contains("<code"),
+            "next title should render backticks as code, got: {}",
+            nav_intro.next.as_ref().unwrap().title
+        );
     }
 
     #[test]

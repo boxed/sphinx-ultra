@@ -85,7 +85,7 @@
             <a class="next-page" href="{{ next.link }}">
               <div class="page-info">
                 <div class="context"><span>Next</span></div>
-                <div class="title">{{ next.title }}</div>
+                <div class="title">{{ next.title|safe }}</div>
               </div>
             </a>
             {% endif %}
@@ -93,7 +93,7 @@
             <a class="prev-page" href="{{ prev.link }}">
               <div class="page-info">
                 <div class="context"><span>Previous</span></div>
-                <div class="title">{{ prev.title }}</div>
+                <div class="title">{{ prev.title|safe }}</div>
               </div>
             </a>
             {% endif %}

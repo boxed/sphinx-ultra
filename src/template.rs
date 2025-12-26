@@ -205,7 +205,7 @@ impl TemplateEngine {
             "toctree",
             |_args: &[Value]| -> Result<Value, MinijinjaError> {
                 // TODO: Implement actual toctree generation
-                Ok(Value::from_safe_string("<div class=\"toctree-wrapper\"></div>".to_string()))
+                Ok(Value::from_safe_string("<div class=\"toctree-wrapper compound\"></div>".to_string()))
             },
         );
 

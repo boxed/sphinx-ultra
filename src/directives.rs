@@ -513,11 +513,11 @@ impl DirectiveProcessor for ToctreeDirective {
 
         let mut html = String::new();
 
-        // Start wrapper div
+        // Start wrapper div (with "compound" class like Sphinx)
         if hidden {
-            html.push_str("<div class=\"toctree-wrapper\" style=\"display: none;\">\n");
+            html.push_str("<div class=\"toctree-wrapper compound\" style=\"display: none;\">\n");
         } else {
-            html.push_str("<div class=\"toctree-wrapper\">\n");
+            html.push_str("<div class=\"toctree-wrapper compound\">\n");
         }
 
         // Add caption if present

@@ -18,6 +18,8 @@ pub struct HtmlRenderer {
     role_registry: RoleRegistry,
     /// Map of document paths to their titles (e.g., "intro" -> "Introduction")
     document_titles: HashMap<String, String>,
+    /// Map of document paths to their sections (title, anchor) for nested toctree entries
+    document_sections: HashMap<String, Vec<(String, String)>>,
     /// Syntax definitions for code highlighting
     syntax_set: SyntaxSet,
     /// Theme for code highlighting
@@ -41,6 +43,7 @@ impl HtmlRenderer {
             directive_registry: DirectiveRegistry::new(),
             role_registry: RoleRegistry::new(),
             document_titles: HashMap::new(),
+            document_sections: HashMap::new(),
             syntax_set: SyntaxSet::load_defaults_newlines(),
             theme_set: ThemeSet::load_defaults(),
             theme_name: "base16-ocean.dark".to_string(),
@@ -97,6 +100,12 @@ impl HtmlRenderer {
     /// Look up a document title by path. Returns None if not registered.
     pub fn get_document_title(&self, path: &str) -> Option<&String> {
         self.document_titles.get(path)
+    }
+
+    /// Register document sections for nested toctree entries.
+    /// Each section is a tuple of (title, anchor).
+    pub fn register_document_sections(&mut self, path: &str, sections: Vec<(String, String)>) {
+        self.document_sections.insert(path.to_string(), sections);
     }
 
     /// Render document content to HTML.
@@ -343,11 +352,11 @@ impl HtmlRenderer {
 
         let mut html = String::new();
 
-        // Start wrapper div
+        // Start wrapper div (with "compound" class like Sphinx)
         if hidden {
-            html.push_str("<div class=\"toctree-wrapper\" style=\"display: none;\">\n");
+            html.push_str("<div class=\"toctree-wrapper compound\" style=\"display: none;\">\n");
         } else {
-            html.push_str("<div class=\"toctree-wrapper\">\n");
+            html.push_str("<div class=\"toctree-wrapper compound\">\n");
         }
 
         // Add caption if present
@@ -390,11 +399,33 @@ impl HtmlRenderer {
                 // Convert path to .html link
                 let href = format!("{}.html", path);
 
+                // Render inline RST markup in the title (e.g., `code` -> <code>code</code>)
+                let rendered_title = self.render_rst_inline(&display_title);
+
                 html.push_str(&format!(
-                    "<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"{}\">{}</a></li>\n",
+                    "<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"{}\">{}</a>",
                     html_escape::encode_text(&href),
-                    html_escape::encode_text(&display_title)
+                    rendered_title
                 ));
+
+                // Add nested sections if available
+                if let Some(sections) = self.document_sections.get(&path) {
+                    if !sections.is_empty() {
+                        html.push_str("\n<ul>\n");
+                        for (section_title, section_anchor) in sections {
+                            let section_href = format!("{}.html#{}", path, section_anchor);
+                            let rendered_section_title = self.render_rst_inline(section_title);
+                            html.push_str(&format!(
+                                "<li class=\"toctree-l2\"><a class=\"reference internal\" href=\"{}\">{}</a></li>\n",
+                                html_escape::encode_text(&section_href),
+                                rendered_section_title
+                            ));
+                        }
+                        html.push_str("</ul>\n");
+                    }
+                }
+
+                html.push_str("</li>\n");
             }
             html.push_str("</ul>\n");
         }
@@ -1795,6 +1826,158 @@ Some text after.
         assert!(
             html.contains("hidden") || html.contains("display: none") || html.contains("display:none"),
             "hidden toctree should be hidden"
+        );
+    }
+
+    #[test]
+    fn test_toctree_wrapper_has_compound_class() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"Index
+=====
+
+.. toctree::
+
+   intro
+   guide
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let renderer = HtmlRenderer::new();
+        let html = renderer.render_document_content(&doc.content);
+
+        // Toctree wrapper should have both "toctree-wrapper" and "compound" classes
+        assert!(
+            html.contains("toctree-wrapper compound"),
+            "should have 'toctree-wrapper compound' class, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_toctree_renders_inline_code_in_titles() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        // Simulate a toctree where titles contain backticks (inline code)
+        let content = r#"Index
+=====
+
+.. toctree::
+
+   after
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        // Register a title with backticks (as would come from parsing the referenced doc)
+        renderer.register_document_title("after", "`after`");
+
+        let html = renderer.render_document_content(&doc.content);
+
+        // The backticks should be rendered as inline code, not as literal backticks
+        assert!(
+            html.contains("<code class=\"code docutils literal notranslate\">"),
+            "should render backticks as code element with proper classes, got: {}",
+            html
+        );
+        assert!(
+            html.contains("<span class=\"pre\">after</span>"),
+            "should contain the code content in a span, got: {}",
+            html
+        );
+        assert!(
+            !html.contains("`after`"),
+            "should NOT contain literal backticks in output, got: {}",
+            html
+        );
+    }
+
+    #[test]
+    fn test_toctree_nested_sections() {
+        use crate::config::BuildConfig;
+        use crate::parser::Parser;
+        use std::io::Write;
+
+        let content = r#"Index
+=====
+
+.. toctree::
+
+   guide
+"#;
+
+        let mut temp_file = tempfile::NamedTempFile::with_suffix(".rst").unwrap();
+        temp_file.write_all(content.as_bytes()).unwrap();
+
+        let config = BuildConfig::default();
+        let parser = Parser::new(&config).unwrap();
+        let doc = parser.parse(temp_file.path(), content).unwrap();
+
+        let mut renderer = HtmlRenderer::new();
+        renderer.register_document_title("guide", "User Guide");
+        // Register sections for the "guide" document
+        renderer.register_document_sections(
+            "guide",
+            vec![
+                ("Installation".to_string(), "installation".to_string()),
+                ("Configuration".to_string(), "configuration".to_string()),
+            ],
+        );
+
+        let html = renderer.render_document_content(&doc.content);
+
+        // Should have toctree-l1 for the main entry
+        assert!(
+            html.contains("toctree-l1"),
+            "should have toctree-l1 class for main entry, got: {}",
+            html
+        );
+
+        // Should have nested ul with toctree-l2 entries for sections
+        assert!(
+            html.contains("toctree-l2"),
+            "should have toctree-l2 class for nested sections, got: {}",
+            html
+        );
+
+        // Should have links to sections with anchors
+        assert!(
+            html.contains("guide.html#installation"),
+            "should have link to installation section, got: {}",
+            html
+        );
+        assert!(
+            html.contains("guide.html#configuration"),
+            "should have link to configuration section, got: {}",
+            html
+        );
+
+        // Should have the section titles
+        assert!(
+            html.contains("Installation"),
+            "should have Installation title, got: {}",
+            html
+        );
+        assert!(
+            html.contains("Configuration"),
+            "should have Configuration title, got: {}",
+            html
         );
     }
 

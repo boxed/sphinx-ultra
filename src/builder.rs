@@ -44,6 +44,8 @@ pub struct SphinxBuilder {
     errors: Arc<Mutex<Vec<BuildErrorReport>>>,
     /// Map of document paths (without extension) to their titles
     document_titles: Arc<Mutex<HashMap<String, String>>>,
+    /// Map of document paths to their sections (title, anchor) for nested toctree entries
+    document_sections: Arc<Mutex<HashMap<String, Vec<(String, String)>>>>,
     #[allow(dead_code)]
     sphinx_app: Option<SphinxApp>,
     #[allow(dead_code)]
@@ -113,6 +115,7 @@ impl SphinxBuilder {
             warnings: Arc::new(Mutex::new(Vec::new())),
             errors: Arc::new(Mutex::new(Vec::new())),
             document_titles: Arc::new(Mutex::new(HashMap::new())),
+            document_sections: Arc::new(Mutex::new(HashMap::new())),
             sphinx_app: Some(sphinx_app),
             extension_loader,
             theme_registry,
@@ -260,6 +263,9 @@ impl SphinxBuilder {
                     // Extract toctree entries
                     let toctree_entries = self.extract_toctree_references(&doc).unwrap_or_default();
 
+                    // Extract sections (sub-titles) from the document for nested toctree entries
+                    let sections = Self::extract_document_sections(&doc);
+
                     // Return doc info
                     let title = if !doc.title.is_empty() && doc.title != "Untitled" {
                         doc.title
@@ -267,17 +273,21 @@ impl SphinxBuilder {
                         doc_path.clone()
                     };
 
-                    Some((doc_path, title, toctree_entries))
+                    Some((doc_path, title, toctree_entries, sections))
                 })
                 .collect()
         });
 
-        // Store collected titles and build navigation
+        // Store collected titles, sections, and build navigation
         let mut doc_titles = self.document_titles.lock().unwrap();
+        let mut doc_sections = self.document_sections.lock().unwrap();
         let mut nav = self.navigation.lock().unwrap();
 
-        for (path, title, toctree_entries) in doc_info {
+        for (path, title, toctree_entries, sections) in doc_info {
             doc_titles.insert(path.clone(), title.clone());
+            if !sections.is_empty() {
+                doc_sections.insert(path.clone(), sections);
+            }
             nav.register_document(&path, &title);
             if !toctree_entries.is_empty() {
                 nav.register_toctree(&path, toctree_entries);
@@ -285,6 +295,30 @@ impl SphinxBuilder {
         }
 
         Ok(())
+    }
+
+    /// Extract sections (sub-titles) from a document for nested toctree entries.
+    /// Returns a vector of (title, anchor) tuples for level 2 headers.
+    fn extract_document_sections(doc: &Document) -> Vec<(String, String)> {
+        use crate::document::{DocumentContent, RstNode};
+        use crate::renderer::slugify;
+
+        let mut sections = Vec::new();
+
+        if let DocumentContent::RestructuredText(rst) = &doc.content {
+            for node in &rst.ast {
+                if let RstNode::Title { text, level, .. } = node {
+                    // Only include level 2 headers (immediate sub-sections)
+                    if *level == 2 {
+                        // Generate anchor/slug from title
+                        let anchor = slugify(text);
+                        sections.push((text.clone(), anchor));
+                    }
+                }
+            }
+        }
+
+        sections
     }
 
     pub async fn build(&self) -> Result<BuildStats> {
@@ -573,13 +607,19 @@ impl SphinxBuilder {
             .to_string_lossy()
             .replace('\\', "/");
 
-        // Render document content to HTML with document titles for toctree
+        // Render document content to HTML with document titles and sections for toctree
         let mut renderer = HtmlRenderer::new();
         renderer.set_source_dir(self.source_dir.clone());
         {
             let titles = self.document_titles.lock().unwrap();
             for (path, title) in titles.iter() {
                 renderer.register_document_title(path, title);
+            }
+        }
+        {
+            let sections = self.document_sections.lock().unwrap();
+            for (path, section_list) in sections.iter() {
+                renderer.register_document_sections(path, section_list.clone());
             }
         }
         let body_html = renderer.render_document_content(&document.content);
