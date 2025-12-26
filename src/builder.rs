@@ -914,11 +914,15 @@ impl SphinxBuilder {
                 .await?;
         }
 
-        // Copy project-specific static assets (these override theme assets)
-        let project_static = self.source_dir.join("_static");
-        if project_static.exists() {
-            info!("Copying project static assets from {}", project_static.display());
-            self.copy_dir_to_static(&project_static, &static_output_dir).await?;
+        // Copy project-specific static assets from html_static_path (these override theme assets)
+        for static_path in &self.config.html_static_path {
+            let project_static = self.source_dir.join(static_path);
+            if project_static.exists() {
+                info!("Copying static assets from {}", project_static.display());
+                self.copy_dir_to_static(&project_static, &static_output_dir).await?;
+            } else {
+                debug!("Static path does not exist: {}", project_static.display());
+            }
         }
 
         // Copy logo to _static if specified (Sphinx behavior)
